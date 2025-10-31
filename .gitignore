@@ -1,0 +1,15 @@
+# Ключи
+keys.py
+
+# Логи и кэш
+spreads_log.txt
+signals_cache.json
+
+# Виртуальное окружение
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
