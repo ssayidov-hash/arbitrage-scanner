@@ -1,4 +1,4 @@
-# main.py
+# main.py — Arbitrage Scanner v5.1 (Render.com ready)
 import os
 import time
 import asyncio
@@ -6,22 +6,22 @@ import hashlib
 import logging
 import nest_asyncio
 import ccxt.async_support as ccxt
-import matplotlib.pyplot as plt
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, ContextTypes
+)
 
-# =============== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===============
-required_vars = [
+# =============== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===============
+required = [
     "BYBIT_API_KEY", "BYBIT_API_SECRET",
     "MEXC_API_KEY", "MEXC_API_SECRET",
     "BITGET_API_KEY", "BITGET_API_SECRET", "BITGET_API_PASSPHRASE",
     "TELEGRAM_BOT_TOKEN"
 ]
-
-missing = [var for var in required_vars if not os.getenv(var)]
+missing = [v for v in required if not os.getenv(v)]
 if missing:
-    print(f"ОШИБКА: Не заданы переменные: {', '.join(missing)}")
+    print(f"ОШИБКА: Нет переменных: {', '.join(missing)}")
     exit(1)
 
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
@@ -36,15 +36,13 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # =============== КОНФИГ ===============
 MIN_SPREAD = 1.2
 MIN_VOLUME_1H = 500_000
-SEND_DELAY = 1.0
 SCAN_INTERVAL = 120
-STABILITY_TIME = 360
+SEND_DELAY = 1.0
 
-# =============== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===============
+# =============== ГЛОБАЛЬНЫЕ ===============
 exchanges = {}
 signal_cache = {}
 sent_messages = set()
-active_signals = {}
 
 # =============== ИНИЦИАЛИЗАЦИЯ БИРЖ ===============
 async def init_bybit():
@@ -83,38 +81,42 @@ async def init_exchanges():
         'bitget': await init_bitget()
     }
 
-# =============== ЛОГИРОВАНИЕ ===============
+# =============== ЛОГИ ===============
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
-# =============== ПОЛУЧЕНИЕ ДАННЫХ ===============
-async def fetch_ticker(ex, symbol):
-    try:
-        ticker = await ex.fetch_ticker(symbol)
-        return {
-            'bid': ticker['bid'],
-            'ask': ticker['ask'],
-            'volume': ticker.get('quoteVolume', 0)
-        }
-    except:
-        return None
-
-# =============== СКАНИРОВАНИЕ ПАР ===============
+# =============== СКАНИРОВАНИЕ ===============
 async def scan_all_pairs():
     symbols = set()
-    for ex in exchanges.values():
-        symbols.update(ex.symbols)
+
+    # Загружаем рынки, если не загружены
+    for name, ex in exchanges.items():
+        if not ex.symbols:
+            try:
+                await ex.load_markets()
+            except Exception as e:
+                log(f"Ошибка load_markets {name}: {e}")
+                continue
+        symbols.update(ex.symbols or [])
+
     usdt_pairs = [s for s in symbols if s.endswith('/USDT') and ':' not in s]
+    if not usdt_pairs:
+        return []
 
     results = []
     for symbol in usdt_pairs:
         prices = {}
         volumes = {}
         for name, ex in exchanges.items():
-            data = await fetch_ticker(ex, symbol)
-            if data and data['bid'] and data['ask']:
-                prices[name] = (data['bid'] + data['ask']) / 2
-                volumes[name] = data['volume']
+            try:
+                ticker = await ex.fetch_ticker(symbol)
+                bid = ticker.get('bid')
+                ask = ticker.get('ask')
+                if bid and ask:
+                    prices[name] = (bid + ask) / 2
+                    volumes[name] = ticker.get('quoteVolume', 0)
+            except Exception:
+                continue
 
         if len(prices) < 2:
             continue
@@ -122,7 +124,6 @@ async def scan_all_pairs():
         min_price = min(prices.values())
         max_price = max(prices.values())
         spread = (max_price - min_price) / min_price * 100
-
         if spread < MIN_SPREAD:
             continue
 
@@ -140,13 +141,14 @@ async def scan_all_pairs():
             'expensive': expensive_ex,
             'price_cheap': round(prices[cheap_ex], 6),
             'price_expensive': round(prices[expensive_ex], 6),
-            'volume_1h': round(min_vol / 1_000_000, 2)
+            'volume_1h': round(min_vol / 1_000_000, 2),
+            'first_seen': time.time()
         })
 
     results.sort(key=lambda x: x['spread'], reverse=True)
     return results[:10]
 
-# =============== ТАЙМЕР СТАБИЛЬНОСТИ ===============
+# =============== ТАЙМЕР ===============
 def update_signal_timers(signals):
     now = time.time()
     for sig in signals:
@@ -157,14 +159,12 @@ def update_signal_timers(signals):
             sig['timer'] = f"{mins} мин | {sig['spread']}%"
         else:
             sig['timer'] = "новый"
-            sig['first_seen'] = now
     return signals
 
-# =============== ГЕНЕРАЦИЯ ТЕКСТА ===============
+# =============== ТЕКСТ ===============
 def generate_signal_text(signals, numbered=False):
     if not signals:
         return "Нет сигналов."
-
     lines = []
     for i, sig in enumerate(signals):
         prefix = f"#{i+1} " if numbered else ""
@@ -177,7 +177,7 @@ def generate_signal_text(signals, numbered=False):
         )
     return "\n\n".join(lines)
 
-# =============== КЭШ СИГНАЛОВ ===============
+# =============== КЭШ ===============
 def load_signals_cache():
     global signal_cache
     try:
@@ -195,7 +195,7 @@ def save_signals_cache(cache):
     except:
         pass
 
-# =============== AUTO SCAN & CLEANUP ===============
+# =============== AUTO SCAN ===============
 async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
     global signal_cache
 
@@ -229,7 +229,6 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
     for chat_id in chat_ids:
         try:
             msg = await context.application.bot.send_message(chat_id=chat_id, text=text)
-            active_signals[msg.message_id] = {"hash": signal_hash, "time": now}
         except Exception as e:
             log(f"Ошибка отправки: {e}")
 
@@ -249,9 +248,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scan — скан сейчас\n"
         "/analyze BTC/USDT — детальный отчёт\n"
         "/buy 1 — купить по сигналу #1\n"
-        "/buy BTC/USDT 0.02 — купить 0.02 BTC\n"
-        "/balance — баланс USDT\n"
-        "/log — последние логи\n"
+        "/balance — баланс\n"
         "/stop — остановить"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -272,9 +269,16 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     prices = {}
     for name, ex in exchanges.items():
-        data = await fetch_ticker(ex, symbol)
-        if data:
-            prices[name] = (data['bid'] + data['ask']) / 2
+        try:
+            if not ex.symbols:
+                await ex.load_markets()
+            ticker = await ex.fetch_ticker(symbol)
+            bid = ticker.get('bid')
+            ask = ticker.get('ask')
+            if bid and ask:
+                prices[name] = (bid + ask) / 2
+        except:
+            continue
 
     if len(prices) < 2:
         await update.message.reply_text("Недостаточно данных.")
@@ -284,21 +288,11 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     max_ex = max(prices, key=prices.get)
     spread = (prices[max_ex] - prices[min_ex]) / prices[min_ex] * 100
 
-    text = (
-        f"*{symbol}*\n\n"
-        f"Дешёвая: {min_ex.upper()} → {prices[min_ex]:.6f}\n"
-        f"Дорогая: {max_ex.upper()} → {prices[max_ex]:.6f}\n"
-        f"Спред: {spread:.2f}%"
-    )
+    text = f"*{symbol}*\n\nДешёвая: {min_ex.upper()} → {prices[min_ex]:.6f}\nДорогая: {max_ex.upper()} → {prices[max_ex]:.6f}\nСпред: {spread:.2f}%"
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Использование: /buy 1 или /buy BTC/USDT 0.02")
-        return
-
-    # Логика покупки (заглушка)
-    await update.message.reply_text("Покупка выполнена на дешёвой бирже.")
+    await update.message.reply_text("Покупка выполнена (заглушка).")
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Баланс: 1000 USDT (пример)")
@@ -309,6 +303,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del context.chat_data[chat_id]
     await update.message.reply_text("Остановлено.")
 
+# =============== ЗАПУСК ===============
 async def main():
     nest_asyncio.apply()
     await init_exchanges()
@@ -323,24 +318,21 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-# JobQueue не нужен — используем напрямую
-app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
+    # JobQueue работает по умолчанию в PTB 21.5
+    app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     try:
         await app.run_polling()
     finally:
         for ex in exchanges.values():
-            await ex.close()
-
+            try:
+                await ex.close()
+            except:
+                pass
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())   # ← ВОТ ЭТА СТРОКА!
+        asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
-
-
-
-
-
