@@ -1,4 +1,4 @@
-# main.py — Arbitrage Scanner v5.1 (Render.com FINAL)
+# main.py — Arbitrage Scanner v5.1 (Render.com FINAL + APScheduler)
 import os
 import time
 import asyncio
@@ -9,6 +9,7 @@ from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes
 )
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # =============== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===============
 required = [
@@ -254,7 +255,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scan — скан сейчас\n"
         "/analyze BTC/USDT — детальный отчёт\n"
         "/buy 1 — купить по сигналу #1\n"
-        "/buy BTC/USDT 0.02 — купить 0.02 BTC\n"
         "/balance — баланс USDT\n"
         "/stop — остановить автоскан"
     )
@@ -332,13 +332,19 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-    app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
+    # === APScheduler вместо JobQueue ===
+    scheduler = AsyncIOScheduler()
+    dummy_context = ContextTypes.DEFAULT_TYPE()
+    dummy_context.application = app
+    scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL, args=[dummy_context])
+    scheduler.start()
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     await app.run_polling()
 
+# === ЗАПУСК БЕЗ asyncio.run() ===
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.get_event_loop().run_until_complete(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
