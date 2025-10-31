@@ -245,11 +245,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Автоскан каждые 2 мин\n"
         "Спред ≥1.2% • Объём 1ч ≥500k$\n\n"
         "*Команды:*\n"
+        "/start — главное меню\n"
         "/scan — скан сейчас\n"
         "/analyze BTC/USDT — детальный отчёт\n"
         "/buy 1 — купить по сигналу #1\n"
-        "/balance — баланс\n"
-        "/stop — остановить"
+        "/buy BTC/USDT 0.02 — купить 0.02 BTC\n"
+        "/balance — баланс USDT\n"
+        "/log — последние логи\n"
+        "/stop — остановить автоскан"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -336,3 +339,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
