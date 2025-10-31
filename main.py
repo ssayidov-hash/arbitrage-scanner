@@ -108,6 +108,7 @@ def init_bitget():
     ex = ccxt.bitget({
         'apiKey': BITGET_API_KEY,
         'secret': BITGET_API_SECRET,
+        'password': BITGET_API_PASSPHRASE,  # ← ДОБАВЛЕНО
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
@@ -516,4 +517,5 @@ if __name__ == "__main__":
         log("Bot started")
         asyncio.run(app.run_polling())
     else:
+
         print("Установите MODE = 'telegram'")
