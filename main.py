@@ -47,27 +47,27 @@ sent_messages = set()
 active_signals = {}
 
 # =============== ИНИЦИАЛИЗАЦИЯ БИРЖ ===============
-def init_bybit():
+async def init_bybit():
     ex = ccxt.bybit({
         'apiKey': BYBIT_API_KEY,
         'secret': BYBIT_API_SECRET,
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    ex.load_markets()
+    await ex.load_markets()
     return ex
 
-def init_mexc():
+async def init_mexc():
     ex = ccxt.mexc({
         'apiKey': MEXC_API_KEY,
         'secret': MEXC_API_SECRET,
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    ex.load_markets()
+    await ex.load_markets()
     return ex
 
-def init_bitget():
+async def init_bitget():
     ex = ccxt.bitget({
         'apiKey': BITGET_API_KEY,
         'secret': BITGET_API_SECRET,
@@ -75,7 +75,7 @@ def init_bitget():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    ex.load_markets()
+    await ex.load_markets()
     return ex
 
 async def init_exchanges():
@@ -338,3 +338,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
