@@ -7,7 +7,7 @@ import ccxt.async_support as ccxt
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, CallbackContext
+    Application, CommandHandler, ContextTypes
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -46,32 +46,29 @@ app = None  # Глобальное приложение
 
 # =============== ИНИЦИАЛИЗАЦИЯ БИРЖ ===============
 async def init_bybit():
-    ex = ccxt.bybit({
+    return ccxt.bybit({
         'apiKey': BYBIT_API_KEY,
         'secret': BYBIT_API_SECRET,
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    return ex
 
 async def init_mexc():
-    ex = ccxt.mexc({
+    return ccxt.mexc({
         'apiKey': MEXC_API_KEY,
         'secret': MEXC_API_SECRET,
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    return ex
 
 async def init_bitget():
-    ex = ccxt.bitget({
+    return ccxt.bitget({
         'apiKey': BITGET_API_KEY,
         'secret': BITGET_API_SECRET,
         'password': BITGET_API_PASSPHRASE,
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    return ex
 
 async def init_exchanges():
     global exchanges
@@ -246,7 +243,7 @@ async def auto_scan():
         sent_messages.clear()
 
 # =============== КОМАНДЫ ===============
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     context.chat_data['chat_id'] = chat_id
     text = (
@@ -264,20 +261,20 @@ async def start(update: Update, context: CallbackContext):
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def ping(update: Update, context: CallbackContext):
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_time = time.time()
     msg = await update.message.reply_text("Пингую...")
     end_time = time.time()
     ping_ms = round((end_time - start_time) * 1000, 2)
     await msg.edit_text(f"Понг! {ping_ms} мс")
 
-async def scan(update: Update, context: CallbackContext):
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Сканирую...")
     signals = await scan_all_pairs()
     text = generate_signal_text(signals, numbered=True)
     await msg.edit_text(text or "Нет сигналов.")
 
-async def analyze(update: Update, context: CallbackContext):
+async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Использование: /analyze BTC/USDT")
         return
@@ -309,13 +306,13 @@ async def analyze(update: Update, context: CallbackContext):
     text = f"*{symbol}*\n\nДешёвая: {min_ex.upper()} → {prices[min_ex]:.6f}\nДорогая: {max_ex.upper()} → {prices[max_ex]:.6f}\nСпред: {spread:.2f}%"
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def buy_command(update: Update, context: CallbackContext):
+async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Покупка выполнена (заглушка).")
 
-async def balance(update: Update, context: CallbackContext):
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Баланс: 1000 USDT (пример)")
 
-async def stop(update: Update, context: CallbackContext):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in context.chat_data:
         del context.chat_data[chat_id]
