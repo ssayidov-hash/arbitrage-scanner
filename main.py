@@ -7,7 +7,7 @@ import ccxt.async_support as ccxt
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes
+    Application, CommandHandler, ContextTypes, CallbackContext
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -334,17 +334,17 @@ async def main():
 
     # === APScheduler вместо JobQueue ===
     scheduler = AsyncIOScheduler()
-    dummy_context = ContextTypes.DEFAULT_TYPE()
-    dummy_context.application = app
-    scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL, args=[dummy_context])
+    # Создаём контекст вручную
+    context = CallbackContext(app)
+    scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL, args=[context])
     scheduler.start()
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     await app.run_polling()
 
-# === ЗАПУСК БЕЗ asyncio.run() ===
+# === ЗАПУСК ЧЕРЕЗ asyncio.run() ===
 if __name__ == "__main__":
     try:
-        asyncio.get_event_loop().run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
