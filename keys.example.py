@@ -1,11 +1,12 @@
-# keys.example.py — ПЕРЕИМЕНУЙ В keys.py НА RENDER!
-BYBIT_API_KEY = "your_bybit_api_key"
-BYBIT_API_SECRET = "your_bybit_secret"
+# keys.example.py
+BYBIT_API_KEY = "xxx"
+BYBIT_API_SECRET = "xxx"
 
-MEXC_API_KEY = "your_mexc_api_key"
-MEXC_API_SECRET = "your_mexc_secret"
+MEXC_API_KEY = "xxx"
+MEXC_API_SECRET = "xxx"
 
-BITGET_API_KEY = "your_bitget_api_key"
-BITGET_API_SECRET = "your_bitget_secret"
+BITGET_API_KEY = "xxx"
+BITGET_API_SECRET = "xxx"
+BITGET_API_PASSPHRASE = "your_passphrase_here"  # ← НОВОЕ
 
-TELEGRAM_BOT_TOKEN = "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ"
+TELEGRAM_BOT_TOKEN = "123456:ABCdef..."
