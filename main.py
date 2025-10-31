@@ -328,7 +328,12 @@ async def main():
     job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
-    await app.run_polling()
+    try:
+        await app.run_polling()
+    finally:
+        # Закрываем все биржи
+        for ex in exchanges.values():
+            await ex.close()
 
 if __name__ == "__main__":
     try:
@@ -336,11 +341,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         log("Бот остановлен.")
 
-    log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
-    try:
-        await app.run_polling()
-    finally:
-        # Закрываем соединения
-        for ex in exchanges.values():
-            await ex.close()
 
