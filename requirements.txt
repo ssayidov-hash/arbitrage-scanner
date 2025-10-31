@@ -1,5 +1,4 @@
 ccxt
-python-telegram-bot[job-queue]==21.5
+python-telegram-bot==21.5
 matplotlib==3.8.4
 nest_asyncio==1.6.0
-
