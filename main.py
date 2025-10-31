@@ -333,26 +333,26 @@ async def main():
     app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("help", start))  # по желанию
 
     # === APScheduler ===
     scheduler = AsyncIOScheduler()
     scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
-    
     # === ОТПРАВКА УВЕДОМЛЕНИЯ ПРИ ЗАПУСКЕ ===
-ADMIN_CHAT_ID = 986793552  # замени на свой ID
+    ADMIN_CHAT_ID = 986793552  # замени на свой Telegram ID
+    try:
+        await app.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text="🤖 Бот перезапущен и работает на Render ✅"
+        )
+    except Exception as e:
+        log(f"Не удалось отправить сообщение админу: {e}")
 
-try:
-    await app.bot.send_message(
-        chat_id=ADMIN_CHAT_ID,
-        text="🤖 Бот перезапущен и работает на Render ✅"
-    )
-except Exception as e:
-    log(f"Не удалось отправить сообщение админу: {e}")
-
+    log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     await app.run_polling()
+
 
 # === ЗАПУСК ===
 if __name__ == "__main__":
@@ -361,6 +361,7 @@ if __name__ == "__main__":
 
     nest_asyncio.apply()  # разрешает вложенные event loop (Render)
     asyncio.get_event_loop().run_until_complete(main())
+
 
 
 
