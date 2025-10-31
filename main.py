@@ -342,11 +342,10 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
+    # JobQueue работает в PTB 21.5 по умолчанию
     app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
-    
-    # Запускаем polling БЕЗ nest_asyncio
     await app.run_polling()
 
 if __name__ == "__main__":
@@ -354,6 +353,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
 
