@@ -88,23 +88,25 @@ def log(msg):
 async def scan_all_pairs():
     symbols = set()
 
-    # Загружаем рынки для всех бирж
+    # Загружаем рынки, если ex.markets пустой
     for name, ex in exchanges.items():
-        if not ex.markets:  # ← Проверяем ex.markets, а не ex.symbols!
+        if not ex.markets:
             try:
-                log(f"Загружаю рынки для {name}...")
+                log(f"Загружаю рынки для {name.upper()}...")
                 await ex.load_markets()
             except Exception as e:
-                log(f"Ошибка load_markets {name}: {e}")
+                log(f"Ошибка загрузки рынков {name}: {e}")
                 continue
-        # Теперь ex.markets — словарь, ex.symbols — список
-        if ex.markets:
-            symbols.update(ex.markets.keys())
+        # Теперь ex.markets — словарь с символами
+        symbols.update(ex.markets.keys())
 
+    # Фильтруем USDT-пары
     usdt_pairs = [s for s in symbols if s.endswith('/USDT') and ':' not in s]
     if not usdt_pairs:
-        log("Нет USDT-пар")
+        log("Нет доступных USDT-пар.")
         return []
+
+    log(f"Сканирую {len(usdt_pairs)} пар...")
 
     results = []
     for symbol in usdt_pairs:
@@ -119,7 +121,7 @@ async def scan_all_pairs():
                     prices[name] = (bid + ask) / 2
                     volumes[name] = ticker.get('quoteVolume', 0)
             except Exception as e:
-                log(f"Ошибка fetch_ticker {name} {symbol}: {e}")
+                log(f"Ошибка цены {symbol} на {name}: {e}")
                 continue
 
         if len(prices) < 2:
@@ -128,6 +130,7 @@ async def scan_all_pairs():
         min_price = min(prices.values())
         max_price = max(prices.values())
         spread = (max_price - min_price) / min_price * 100
+
         if spread < MIN_SPREAD:
             continue
 
@@ -150,6 +153,7 @@ async def scan_all_pairs():
         })
 
     results.sort(key=lambda x: x['spread'], reverse=True)
+    log(f"Найдено сигналов: {len(results)}")
     return results[:10]
 
 # =============== ТАЙМЕР ===============
@@ -356,4 +360,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
