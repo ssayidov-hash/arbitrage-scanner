@@ -1,9 +1,8 @@
-# main.py — Arbitrage Scanner v5.1 (Render.com ready)
+# main.py — Arbitrage Scanner v5.1 (Render.com + /ping + /start в меню)
 import os
 import time
 import asyncio
 import hashlib
-import logging
 import nest_asyncio
 import ccxt.async_support as ccxt
 from datetime import datetime
@@ -89,7 +88,6 @@ def log(msg):
 async def scan_all_pairs():
     symbols = set()
 
-    # Загружаем рынки, если не загружены
     for name, ex in exchanges.items():
         if not ex.symbols:
             try:
@@ -228,7 +226,7 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id in chat_ids:
         try:
-            msg = await context.application.bot.send_message(chat_id=chat_id, text=text)
+            await context.application.bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:
             log(f"Ошибка отправки: {e}")
 
@@ -246,6 +244,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Спред ≥1.2% • Объём 1ч ≥500k$\n\n"
         "*Команды:*\n"
         "/start — главное меню\n"
+        "/ping — пинг бота\n"
         "/scan — скан сейчас\n"
         "/analyze BTC/USDT — детальный отчёт\n"
         "/buy 1 — купить по сигналу #1\n"
@@ -255,6 +254,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stop — остановить автоскан"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    start_time = time.time()
+    msg = await update.message.reply_text("Пингую...")
+    end_time = time.time()
+    ping_ms = round((end_time - start_time) * 1000, 2)
+    await msg.edit_text(f"Понг! {ping_ms} мс")
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Сканирую...")
@@ -304,7 +310,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id in context.chat_data:
         del context.chat_data[chat_id]
-    await update.message.reply_text("Остановлено.")
+    await update.message.reply_text("Автоскан остановлен.")
 
 # =============== ЗАПУСК ===============
 async def main():
@@ -315,13 +321,13 @@ async def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("analyze", analyze))
     app.add_handler(CommandHandler("buy", buy_command))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-    # JobQueue работает по умолчанию в PTB 21.5
     app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
@@ -339,4 +345,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
-
