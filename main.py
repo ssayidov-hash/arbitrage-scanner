@@ -309,7 +309,6 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del context.chat_data[chat_id]
     await update.message.reply_text("Остановлено.")
 
-# =============== ЗАПУСК ===============
 async def main():
     nest_asyncio.apply()
     await init_exchanges()
@@ -331,14 +330,15 @@ async def main():
     try:
         await app.run_polling()
     finally:
-        # Закрываем все биржи
         for ex in exchanges.values():
             await ex.close()
 
+
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(main())   # ← ВОТ ЭТА СТРОКА!
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
