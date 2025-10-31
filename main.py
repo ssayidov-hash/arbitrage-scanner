@@ -340,6 +340,18 @@ async def main():
     scheduler.start()
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
+    
+    # === ОТПРАВКА УВЕДОМЛЕНИЯ ПРИ ЗАПУСКЕ ===
+ADMIN_CHAT_ID = <твой_telegram_id>  # замени на свой ID
+
+try:
+    await app.bot.send_message(
+        chat_id=ADMIN_CHAT_ID,
+        text="🤖 Бот перезапущен и работает на Render ✅"
+    )
+except Exception as e:
+    log(f"Не удалось отправить сообщение админу: {e}")
+
     await app.run_polling()
 
 # === ЗАПУСК ===
@@ -349,6 +361,7 @@ if __name__ == "__main__":
 
     nest_asyncio.apply()  # разрешает вложенные event loop (Render)
     asyncio.get_event_loop().run_until_complete(main())
+
 
 
 
