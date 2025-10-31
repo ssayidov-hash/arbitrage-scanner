@@ -1,4 +1,4 @@
-# main.py — Arbitrage Scanner v5.1 (Render.com + /ping + /start в меню)
+# main.py — Arbitrage Scanner v5.1 (Render.com FINAL)
 import os
 import time
 import asyncio
@@ -87,22 +87,19 @@ def log(msg):
 async def scan_all_pairs():
     symbols = set()
 
-    # Загружаем рынки, если ex.markets пустой
     for name, ex in exchanges.items():
         if not ex.markets:
             try:
                 log(f"Загружаю рынки для {name.upper()}...")
                 await ex.load_markets()
             except Exception as e:
-                log(f"Ошибка загрузки рынков {name}: {e}")
+                log(f"Ошибка load_markets {name}: {e}")
                 continue
-        # Теперь ex.markets — словарь с символами
         symbols.update(ex.markets.keys())
 
-    # Фильтруем USDT-пары
     usdt_pairs = [s for s in symbols if s.endswith('/USDT') and ':' not in s]
     if not usdt_pairs:
-        log("Нет доступных USDT-пар.")
+        log("Нет USDT-пар")
         return []
 
     log(f"Сканирую {len(usdt_pairs)} пар...")
@@ -119,8 +116,7 @@ async def scan_all_pairs():
                 if bid and ask:
                     prices[name] = (bid + ask) / 2
                     volumes[name] = ticker.get('quoteVolume', 0)
-            except Exception as e:
-                log(f"Ошибка цены {symbol} на {name}: {e}")
+            except Exception:
                 continue
 
         if len(prices) < 2:
@@ -129,7 +125,6 @@ async def scan_all_pairs():
         min_price = min(prices.values())
         max_price = max(prices.values())
         spread = (max_price - min_price) / min_price * 100
-
         if spread < MIN_SPREAD:
             continue
 
@@ -209,13 +204,13 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
     chat_ids = [d.get("chat_id") for d in context.application.chat_data.values() if d.get("chat_id")]
     if not chat_ids:
         return
-        
+
     log("Автоскан запущен...")
     signals = await scan_all_pairs()
     if not signals:
         log("Сигналов нет.")
         return
-    signals = await scan_all_pairs()
+
     signals = update_signal_timers(signals)
 
     now = time.time()
@@ -230,9 +225,6 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
     save_signals_cache(signal_cache)
 
     text = generate_signal_text(signals, numbered=True)
-    if not text or text == "Нет сигналов.":
-        return
-
     signal_hash = hashlib.md5(text.encode()).hexdigest()
     if signal_hash in sent_messages:
         return
@@ -264,7 +256,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/buy 1 — купить по сигналу #1\n"
         "/buy BTC/USDT 0.02 — купить 0.02 BTC\n"
         "/balance — баланс USDT\n"
-        "/log — последние логи\n"
         "/stop — остановить автоскан"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -293,7 +284,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = {}
     for name, ex in exchanges.items():
         try:
-            if not ex.symbols:
+            if not ex.markets:
                 await ex.load_markets()
             ticker = await ex.fetch_ticker(symbol)
             bid = ticker.get('bid')
@@ -341,7 +332,6 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-    # JobQueue работает в PTB 21.5 по умолчанию
     app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
@@ -352,8 +342,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
-
-
-
-
-
