@@ -54,7 +54,7 @@ async def init_bybit():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    await ex.load_markets()
+    # УБРАЛИ await ex.load_markets()
     return ex
 
 async def init_mexc():
@@ -64,7 +64,6 @@ async def init_mexc():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    await ex.load_markets()
     return ex
 
 async def init_bitget():
@@ -75,16 +74,14 @@ async def init_bitget():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    await ex.load_markets()
-    return ex
-
-async def init_exchanges():
+    async def init_exchanges():
     global exchanges
     exchanges = {
-        'bybit': await init_bybit(),
-        'mexc': await init_mexc(),
-        'bitget': await init_bitget()
+        'bybit': init_bybit(),    # ← УБРАЛИ await!
+        'mexc': init_mexc(),
+        'bitget': init_bitget()
     }
+    # При первом fetch_ticker() — ccxt сам загрузит рынки
 
 # =============== ЛОГИРОВАНИЕ ===============
 def log(msg):
@@ -339,3 +336,10 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         log("Бот остановлен.")
 
+    log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
+    try:
+        await app.run_polling()
+    finally:
+        # Закрываем все биржи
+        for ex in exchanges.values():
+            await ex.close()
