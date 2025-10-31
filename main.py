@@ -323,8 +323,8 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-    job_queue = app.job_queue
-    job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
+# JobQueue не нужен — используем напрямую
+app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     try:
@@ -339,6 +339,7 @@ if __name__ == "__main__":
         asyncio.run(main())   # ← ВОТ ЭТА СТРОКА!
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
 
