@@ -1,3 +1,4 @@
 ccxt
 python-telegram-bot==21.5
 matplotlib==3.8.4
+APScheduler==3.10.4
