@@ -78,9 +78,9 @@ async def init_bitget():
 async def init_exchanges():
     global exchanges
     exchanges = {
-        'bybit': init_bybit(),
-        'mexc': init_mexc(),
-        'bitget': init_bitget()
+        'bybit': await init_bybit(),
+        'mexc': await init_mexc(),
+        'bitget': await init_bitget()
     }
 
 # =============== ЛОГИРОВАНИЕ ===============
@@ -339,6 +339,7 @@ if __name__ == "__main__":
         asyncio.run(main())   # ← ВОТ ЭТА СТРОКА!
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
 
