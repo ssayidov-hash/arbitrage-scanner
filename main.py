@@ -7,7 +7,7 @@ import ccxt.async_support as ccxt
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, CallbackContext
+    Application, CommandHandler, CallbackContext
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -42,6 +42,7 @@ SEND_DELAY = 1.0
 exchanges = {}
 signal_cache = {}
 sent_messages = set()
+app = None  # Глобальное приложение
 
 # =============== ИНИЦИАЛИЗАЦИЯ БИРЖ ===============
 async def init_bybit():
@@ -199,10 +200,13 @@ def save_signals_cache(cache):
         pass
 
 # =============== AUTO SCAN ===============
-async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
-    global signal_cache
+async def auto_scan():
+    global signal_cache, app
 
-    chat_ids = [d.get("chat_id") for d in context.application.chat_data.values() if d.get("chat_id")]
+    if not app:
+        return
+
+    chat_ids = [d.get("chat_id") for d in app.chat_data.values() if d.get("chat_id")]
     if not chat_ids:
         return
 
@@ -233,7 +237,7 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id in chat_ids:
         try:
-            await context.application.bot.send_message(chat_id=chat_id, text=text)
+            await app.bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:
             log(f"Ошибка отправки: {e}")
 
@@ -242,7 +246,7 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
         sent_messages.clear()
 
 # =============== КОМАНДЫ ===============
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     context.chat_data['chat_id'] = chat_id
     text = (
@@ -260,20 +264,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ping(update: Update, context: CallbackContext):
     start_time = time.time()
     msg = await update.message.reply_text("Пингую...")
     end_time = time.time()
     ping_ms = round((end_time - start_time) * 1000, 2)
     await msg.edit_text(f"Понг! {ping_ms} мс")
 
-async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def scan(update: Update, context: CallbackContext):
     msg = await update.message.reply_text("Сканирую...")
     signals = await scan_all_pairs()
     text = generate_signal_text(signals, numbered=True)
     await msg.edit_text(text or "Нет сигналов.")
 
-async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def analyze(update: Update, context: CallbackContext):
     if not context.args:
         await update.message.reply_text("Использование: /analyze BTC/USDT")
         return
@@ -305,13 +309,13 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"*{symbol}*\n\nДешёвая: {min_ex.upper()} → {prices[min_ex]:.6f}\nДорогая: {max_ex.upper()} → {prices[max_ex]:.6f}\nСпред: {spread:.2f}%"
     await update.message.reply_text(text, parse_mode='Markdown')
 
-async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buy_command(update: Update, context: CallbackContext):
     await update.message.reply_text("Покупка выполнена (заглушка).")
 
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def balance(update: Update, context: CallbackContext):
     await update.message.reply_text("Баланс: 1000 USDT (пример)")
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     if chat_id in context.chat_data:
         del context.chat_data[chat_id]
@@ -319,6 +323,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # =============== ЗАПУСК ===============
 async def main():
+    global app
     await init_exchanges()
     load_signals_cache()
 
@@ -332,19 +337,14 @@ async def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stop", stop))
 
-    # === APScheduler вместо JobQueue ===
+    # === APScheduler ===
     scheduler = AsyncIOScheduler()
-    # Создаём контекст вручную
-    context = CallbackContext(app)
-    scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL, args=[context])
+    scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL)
     scheduler.start()
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
     await app.run_polling()
 
-# === ЗАПУСК ЧЕРЕЗ asyncio.run() ===
+# === ЗАПУСК ===
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        log("Бот остановлен.")
+    asyncio.run(main())
