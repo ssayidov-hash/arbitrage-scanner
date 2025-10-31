@@ -88,17 +88,22 @@ def log(msg):
 async def scan_all_pairs():
     symbols = set()
 
+    # Загружаем рынки для всех бирж
     for name, ex in exchanges.items():
-        if not ex.symbols:
+        if not ex.markets:  # ← Проверяем ex.markets, а не ex.symbols!
             try:
+                log(f"Загружаю рынки для {name}...")
                 await ex.load_markets()
             except Exception as e:
                 log(f"Ошибка load_markets {name}: {e}")
                 continue
-        symbols.update(ex.symbols or [])
+        # Теперь ex.markets — словарь, ex.symbols — список
+        if ex.markets:
+            symbols.update(ex.markets.keys())
 
     usdt_pairs = [s for s in symbols if s.endswith('/USDT') and ':' not in s]
     if not usdt_pairs:
+        log("Нет USDT-пар")
         return []
 
     results = []
@@ -113,7 +118,8 @@ async def scan_all_pairs():
                 if bid and ask:
                     prices[name] = (bid + ask) / 2
                     volumes[name] = ticker.get('quoteVolume', 0)
-            except Exception:
+            except Exception as e:
+                log(f"Ошибка fetch_ticker {name} {symbol}: {e}")
                 continue
 
         if len(prices) < 2:
@@ -200,7 +206,12 @@ async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
     chat_ids = [d.get("chat_id") for d in context.application.chat_data.values() if d.get("chat_id")]
     if not chat_ids:
         return
-
+        
+    log("Автоскан запущен...")
+    signals = await scan_all_pairs()
+    if not signals:
+        log("Сигналов нет.")
+        return
     signals = await scan_all_pairs()
     signals = update_signal_timers(signals)
 
@@ -345,3 +356,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
