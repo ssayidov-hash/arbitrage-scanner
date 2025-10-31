@@ -54,7 +54,6 @@ async def init_bybit():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    # УБРАЛИ await ex.load_markets()
     return ex
 
 async def init_mexc():
@@ -74,14 +73,15 @@ async def init_bitget():
         'options': {'defaultType': 'spot'},
         'enableRateLimit': True
     })
-    async def init_exchanges():
+    return ex
+
+async def init_exchanges():
     global exchanges
     exchanges = {
-        'bybit': init_bybit(),    # ← УБРАЛИ await!
+        'bybit': init_bybit(),
         'mexc': init_mexc(),
         'bitget': init_bitget()
     }
-    # При первом fetch_ticker() — ccxt сам загрузит рынки
 
 # =============== ЛОГИРОВАНИЕ ===============
 def log(msg):
@@ -340,6 +340,7 @@ if __name__ == "__main__":
     try:
         await app.run_polling()
     finally:
-        # Закрываем все биржи
+        # Закрываем соединения
         for ex in exchanges.values():
             await ex.close()
+
