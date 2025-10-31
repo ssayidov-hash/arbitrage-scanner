@@ -329,7 +329,6 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # =============== ЗАПУСК ===============
 async def main():
-    nest_asyncio.apply()
     await init_exchanges()
     load_signals_cache()
 
@@ -346,19 +345,15 @@ async def main():
     app.job_queue.run_repeating(auto_scan, interval=SCAN_INTERVAL, first=10)
 
     log("Telegram-бот v5.1 запущен. Автоскан каждые 2 мин.")
-    try:
-        await app.run_polling()
-    finally:
-        for ex in exchanges.values():
-            try:
-                await ex.close()
-            except:
-                pass
+    
+    # Запускаем polling БЕЗ nest_asyncio
+    await app.run_polling()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
