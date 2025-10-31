@@ -3,7 +3,6 @@ import os
 import time
 import asyncio
 import hashlib
-import nest_asyncio
 import ccxt.async_support as ccxt
 from datetime import datetime
 from telegram import Update
@@ -353,6 +352,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         log("Бот остановлен.")
+
 
 
 
