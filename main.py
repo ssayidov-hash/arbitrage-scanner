@@ -432,18 +432,26 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # =============== AUTO SCAN & CLEANUP ===============
 async def auto_scan(context: ContextTypes.DEFAULT_TYPE):
-    global signal_cache  # ← ПЕРЕМЕСТИ СЮДА!
+    global signal_cache  # ← ПРАВИЛЬНО: в начале!
 
     chat_ids = [d.get("chat_id") for d in context.application.chat_data.values() if d.get("chat_id")]
-    ...
+    if not chat_ids:
+        return
+
+    signals = await scan_all_pairs()
+    signals = update_signal_timers(signals)
+
+    # Обновление кэша
+    now = time.time()  # ← ДОБАВЬ ЭТУ СТРОКУ!
+    new_cache = {}
     for sig in signals:
         key = sig["symbol"]
         if key in signal_cache:
-            ...
+            sig["first_seen"] = signal_cache[key]["first_seen"]
+        new_cache[key] = sig
     
     signal_cache = new_cache
-    save_signals_cache(signal_cache)
-    save_signals_cache(signal_cache)
+    save_signals_cache(signal_cache)  # ← ТОЛЬКО ОДИН РАЗ!
 
     text = generate_signal_text(signals, numbered=True)
     if not text or text == "Нет сигналов.":
@@ -513,4 +521,5 @@ if __name__ == "__main__":
     else:
 
         print("Установите MODE = 'telegram'")
+
 
