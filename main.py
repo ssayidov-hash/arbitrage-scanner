@@ -355,7 +355,7 @@ async def main():
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # ========== WEBHOOK ==========
+       # ========== WEBHOOK ==========
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -366,12 +366,16 @@ async def main():
     await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
 
     log(f"Arbitrage Scanner {VERSION} запущен (webhook). Порт: {port}")
+
+    # Обязательно слушаем порт, чтобы Render 'увидел' открытый socket
     await app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=TELEGRAM_BOT_TOKEN,
         webhook_url=webhook_url,
+        drop_pending_updates=True
     )
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # держим цикл живым
+    await asyncio.Future()
+
