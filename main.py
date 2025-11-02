@@ -1,420 +1,271 @@
-# main.py — Arbitrage Scanner v5.3 (Webhook, Render)
+# main.py — Arbitrage Scanner v5.5 (Webhook, Render)
 import os
-import time
 import asyncio
 import ccxt.async_support as ccxt
 from datetime import datetime
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from aiohttp import web
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    CallbackQueryHandler,
+    Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# ================== ENV ==================
-required = [
-    "BYBIT_API_KEY", "BYBIT_API_SECRET",
-    "MEXC_API_KEY", "MEXC_API_SECRET",
-    "BITGET_API_KEY", "BITGET_API_SECRET", "BITGET_API_PASSPHRASE",
-    "TELEGRAM_BOT_TOKEN",
-]
-missing = [v for v in required if not os.getenv(v)]
-if missing:
-    print(f"ОШИБКА: нет переменных: {', '.join(missing)}")
-    raise SystemExit(1)
-
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-MEXC_API_KEY = os.getenv("MEXC_API_KEY")
-MEXC_API_SECRET = os.getenv("MEXC_API_SECRET")
-BITGET_API_KEY = os.getenv("BITGET_API_KEY")
-BITGET_API_SECRET = os.getenv("BITGET_API_SECRET")
-BITGET_API_PASSPHRASE = os.getenv("BITGET_API_PASSPHRASE")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
 # ================== CONFIG ==================
 MIN_SPREAD = 1.2
-MIN_VOLUME_1H = 500_000
-SCAN_INTERVAL = 120  # сек
-VERSION = "v5.3"
+MIN_VOLUME_1H = 100_000
+SCAN_INTERVAL = 120
+VERSION = "v5.5"
+
+# ================== ENV ==================
+env_vars = {
+    "MEXC_API_KEY": os.getenv("MEXC_API_KEY"),
+    "MEXC_API_SECRET": os.getenv("MEXC_API_SECRET"),
+    "BITGET_API_KEY": os.getenv("BITGET_API_KEY"),
+    "BITGET_API_SECRET": os.getenv("BITGET_API_SECRET"),
+    "BITGET_API_PASSPHRASE": os.getenv("BITGET_API_PASSPHRASE"),
+    "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
+    "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
+    "KUCOIN_API_PASS": os.getenv("KUCOIN_API_PASS"),
+    "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
+}
+TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 
 # ================== GLOBALS ==================
 exchanges = {}
-app: Application | None = None
+app = None
+scanlog_enabled = set()  # чаты, где включён лог сканирования
 
+# ================== TEXT ==================
 INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 
-Бот сканирует BYBIT / MEXC / BITGET по USDT-парам.
-Фильтр: профит ≥ {MIN_SPREAD}% и объём ≥ {MIN_VOLUME_1H/1000:.0f}k$ за 1ч.
-Авто-рассылка каждые {SCAN_INTERVAL} сек для чатов, где включено.
+Бот сканирует *MEXC / BITGET / KUCOIN* по USDT-парам.  
+Анализирует *топ-100 монет* по объёму и ищет арбитраж ≥ {MIN_SPREAD}% с объёмом ≥ {MIN_VOLUME_1H/1000:.0f}k$.
 
-*Команды:*
-/start — инфо и подписка на автоскан
-/info — инфо
-/scan — разовый скан
-/balance — показать USDT на всех биржах
-/ping — проверить, что жив
-/stop — отключить автоскан для этого чата
+*Работа:*
+— Автоскан каждые {SCAN_INTERVAL} сек (если включён)  
+— Команды не блокируются  
+— BUY без номинала — бот сам спросит сумму  
+— Реальное время логов по /scanlog  
+
+*Команды:*  
+/start — запустить и подписаться на автоскан  
+/scan — ручной запуск сканирования  
+/balance — баланс по биржам  
+/scanlog — включить или выключить лог сканирования  
+/info — параметры и помощь  
+/stop — остановить автоскан  
+/ping — проверить соединение
 """
-
-# ================== EXCH INIT ==================
-async def init_bybit():
-    return ccxt.bybit({
-        "apiKey": BYBIT_API_KEY,
-        "secret": BYBIT_API_SECRET,
-        "options": {"defaultType": "spot"},
-        "enableRateLimit": True,
-    })
-
-async def init_mexc():
-    return ccxt.mexc({
-        "apiKey": MEXC_API_KEY,
-        "secret": MEXC_API_SECRET,
-        "options": {"defaultType": "spot"},
-        "enableRateLimit": True,
-    })
-
-async def init_bitget():
-    return ccxt.bitget({
-        "apiKey": BITGET_API_KEY,
-        "secret": BITGET_API_SECRET,
-        "password": BITGET_API_PASSPHRASE,
-        "options": {"defaultType": "spot"},
-        "enableRateLimit": True,
-    })
-
-async def init_exchanges():
-    global exchanges
-    exchanges = {}
-
-    async def safe_init(name, func):
-        try:
-            ex = await func()
-            # пробуем загрузить рынки
-            await ex.load_markets()
-            log(f"{name.upper()} инициализирован ✅")
-            return ex
-        except Exception as e:
-            # проверяем 403 Forbidden или CloudFront
-            if "403" in str(e) or "CloudFront" in str(e):
-                log(f"{name.upper()} ❌ заблокирован (403 Forbidden) — исключаю из списка.")
-                return None
-            log(f"{name.upper()} ошибка инициализации: {e}")
-            return None
-
-    bybit = await safe_init("bybit", init_bybit)
-    mexc = await safe_init("mexc", init_mexc)
-    bitget = await safe_init("bitget", init_bitget)
-
-    # собираем только доступные
-    for name, ex in [("bybit", bybit), ("mexc", mexc), ("bitget", bitget)]:
-        if ex:
-            exchanges[name] = ex
-
-    if not exchanges:
-        raise RuntimeError("❌ Ни одна биржа не инициализирована — проверь API или блокировки")
-
-    log(f"Активные биржи: {', '.join(exchanges.keys())}")
-
 
 # ================== UTILS ==================
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-def get_buy_keyboard(sig: dict):
-    btn = InlineKeyboardButton(
-        text=f"BUY_{sig['cheap'].upper()} (10 USDT)",
-        callback_data=f"buy:{sig['cheap']}:{sig['symbol']}:10",
-    )
-    return InlineKeyboardMarkup([[btn]])
+async def send_log(chat_id, msg):
+    """Отправляет логи в чат, если включён /scanlog"""
+    if app and chat_id in scanlog_enabled:
+        try:
+            await app.bot.send_message(chat_id, f"🩶 {msg}")
+        except:
+            pass
+
+# ================== INIT ==================
+async def init_exchanges():
+    async def try_init(name, ex_class, **kwargs):
+        try:
+            ex = ex_class(kwargs)
+            await ex.load_markets()
+            log(f"{name.upper()} ✅ инициализирован")
+            return ex
+        except Exception as e:
+            log(f"{name.upper()} ❌ {e}")
+            return None
+
+    global exchanges
+    exchanges = {
+        "mexc": await try_init("mexc", ccxt.mexc, apiKey=env_vars["MEXC_API_KEY"], secret=env_vars["MEXC_API_SECRET"]),
+        "bitget": await try_init("bitget", ccxt.bitget, apiKey=env_vars["BITGET_API_KEY"],
+                                 secret=env_vars["BITGET_API_SECRET"], password=env_vars["BITGET_API_PASSPHRASE"]),
+        "kucoin": await try_init("kucoin", ccxt.kucoin, apiKey=env_vars["KUCOIN_API_KEY"],
+                                 secret=env_vars["KUCOIN_API_SECRET"], password=env_vars["KUCOIN_API_PASS"]),
+    }
+    exchanges = {k: v for k, v in exchanges.items() if v}
+    if not exchanges:
+        raise RuntimeError("❌ Нет активных бирж.")
+    log(f"Активные биржи: {', '.join(exchanges.keys())}")
 
 # ================== SCANNER ==================
-async def scan_all_pairs():
-    """
-    Возвращает топ сигналов:
-    [{symbol, spread, cheap, expensive, price_cheap, price_expensive, volume_1h}]
-    """
-    symbols = set()
-    for name, ex in exchanges.items():
-        if not ex.markets:
-            try:
-                log(f"load_markets {name} ...")
-                await ex.load_markets()
-            except Exception as e:
-                log(f"load_markets {name} ошибка: {e}")
-                continue
-        symbols.update(ex.markets.keys())
+async def get_top_symbols(exchange, top_n=100):
+    tickers = await exchange.fetch_tickers()
+    pairs = [(s, t.get("quoteVolume", 0)) for s, t in tickers.items() if s.endswith("/USDT") and ":" not in s]
+    pairs.sort(key=lambda x: x[1], reverse=True)
+    return [s for s, _ in pairs[:top_n]]
 
-    usdt_pairs = [s for s in symbols if s.endswith("/USDT") and ":" not in s]
-    if not usdt_pairs:
-        log("USDT-пар не найдено")
-        return []
-
-    log(f"Сканирую {len(usdt_pairs)} пар...")
+async def scan_all_pairs(chat_id=None):
     results = []
-    FEES = {"bybit": 0.001, "bitget": 0.001, "mexc": 0.001}
+    symbols = set()
+    FEES = {"mexc": 0.001, "bitget": 0.001, "kucoin": 0.001}
 
-    for symbol in usdt_pairs:
-        prices = {}
-        volumes = {}
+    for name, ex in exchanges.items():
+        try:
+            tops = await get_top_symbols(ex)
+            symbols.update(tops)
+        except Exception as e:
+            await send_log(chat_id, f"{name} ошибка топ-листа: {e}")
+
+    await send_log(chat_id, f"Начал скан {len(symbols)} пар...")
+
+    for i, symbol in enumerate(symbols):
+        prices, vols = {}, {}
         for name, ex in exchanges.items():
             try:
-                ticker = await ex.fetch_ticker(symbol)
-                bid = ticker.get("bid")
-                ask = ticker.get("ask")
-                if bid and ask:
-                    prices[name] = (bid + ask) / 2
-                    volumes[name] = ticker.get("quoteVolume", 0) or 0
-            except Exception:
+                t = await ex.fetch_ticker(symbol)
+                if t.get("bid") and t.get("ask"):
+                    prices[name] = (t["bid"] + t["ask"]) / 2
+                    vols[name] = t.get("quoteVolume", 0)
+            except:
                 continue
 
         if len(prices) < 2:
             continue
 
-        min_price = min(prices.values())
-        max_price = max(prices.values())
-        raw_spread = (max_price - min_price) / min_price * 100
-        if raw_spread < MIN_SPREAD:
+        min_p, max_p = min(prices.values()), max(prices.values())
+        spread = (max_p - min_p) / min_p * 100
+        if spread < MIN_SPREAD:
             continue
-
-        min_vol = min(volumes.values())
+        min_vol = min(vols.values())
         if min_vol < MIN_VOLUME_1H:
             continue
 
-        cheap_ex = min(prices, key=prices.get)
-        expensive_ex = max(prices, key=prices.get)
-        fee_buy = FEES.get(cheap_ex, 0.001)
-        fee_sell = FEES.get(expensive_ex, 0.001)
-        net_profit = (max_price / min_price - 1) * 100 - (fee_buy + fee_sell) * 100
-
+        cheap, expensive = min(prices, key=prices.get), max(prices, key=prices.get)
+        profit = (max_p / min_p - 1) * 100 - (FEES[cheap] + FEES[expensive]) * 100
         results.append({
-            "symbol": symbol,
-            "spread": round(net_profit, 2),
-            "cheap": cheap_ex,
-            "expensive": expensive_ex,
-            "price_cheap": round(prices[cheap_ex], 6),
-            "price_expensive": round(prices[expensive_ex], 6),
-            "volume_1h": round(min_vol / 1_000_000, 2),
+            "symbol": symbol, "cheap": cheap, "expensive": expensive,
+            "price_cheap": round(prices[cheap], 6), "price_expensive": round(prices[expensive], 6),
+            "spread": round(profit, 2), "volume_1h": round(min_vol / 1_000_000, 2)
         })
 
+        if chat_id in scanlog_enabled and i % 10 == 0:
+            await send_log(chat_id, f"Скан {i}/{len(symbols)}...")
+
     results.sort(key=lambda x: x["spread"], reverse=True)
-    log(f"Найдено сигналов: {len(results)}")
+    await send_log(chat_id, f"Готово. Найдено {len(results)} сигналов.")
     return results[:10]
 
-# ================== CALLBACKS (BUY) ==================
-async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split(":")
-    if len(data) != 4:
-        return
-    _, exch_name, symbol, usdt = data
-    usdt = float(usdt)
-
-    ex = exchanges.get(exch_name)
-    if not ex:
-        await query.edit_message_text(f"❌ Биржа {exch_name.upper()} не инициализирована")
-        return
-
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{exch_name}:{symbol}:{usdt}"),
-            InlineKeyboardButton("❌ Отмена", callback_data="cancel"),
-        ]
+# ================== BUY LOGIC ==================
+def get_buy_keyboard(sig):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"BUY_{sig['cheap'].upper()}", callback_data=f"buy:{sig['cheap']}:{sig['expensive']}:{sig['symbol']}")]
     ])
-    await query.edit_message_text(
-        f"Подтвердить покупку {symbol} на {exch_name.upper()} на сумму {usdt} USDT?",
-        reply_markup=kb,
-    )
+
+async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    _, cheap, expensive, symbol = q.data.split(":")
+    context.user_data["buy_step"] = {"cheap": cheap, "expensive": expensive, "symbol": symbol}
+    await q.edit_message_text(f"Введите сумму в USDT для покупки {symbol} на {cheap.upper()}:")
+
+async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    step = context.user_data.get("buy_step")
+    if not step:
+        return
+    try:
+        usdt = float(update.message.text)
+        step["usdt"] = usdt
+        context.user_data["buy_step"] = step
+        msg = (f"Покупка *{step['symbol']}*\nБиржа: {step['cheap'].upper()}\n"
+               f"Сумма: {usdt} USDT\nПодтвердить сделку?")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{step['cheap']}:{step['symbol']}:{usdt}"),
+             InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
+        ])
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
+    except:
+        await update.message.reply_text("Неверный формат суммы. Введите число.")
 
 async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split(":")
-    if len(data) != 4:
-        await query.edit_message_text("Ошибка данных подтверждения.")
-        return
-
-    _, exch_name, symbol, usdt = data
+    q = update.callback_query
+    await q.answer()
+    _, exch, symbol, usdt = q.data.split(":")
     usdt = float(usdt)
-    ex = exchanges.get(exch_name)
-
+    ex = exchanges.get(exch)
     try:
-        balance = await ex.fetch_balance()
-        free_usdt = balance["USDT"]["free"]
-        if free_usdt < usdt:
-            await query.edit_message_text(f"💰 Доступно: {free_usdt:.2f} USDT — не хватает.")
-            return
-
-        ticker = await ex.fetch_ticker(symbol)
-        price = ticker["ask"]
-        amount = round(usdt / price, 6)
-
+        bal = await ex.fetch_balance()
+        free = bal["USDT"]["free"]
+        if free < usdt:
+            return await q.edit_message_text(f"Недостаточно средств ({free:.2f} USDT).")
+        t = await ex.fetch_ticker(symbol)
+        amount = round(usdt / t["ask"], 6)
         order = await ex.create_market_buy_order(symbol, amount)
-        await query.edit_message_text(
-            f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch_name.upper()} по {price} ({usdt} USDT)\n"
-            f"ID: {order.get('id', '—')}"
-        )
+        await q.edit_message_text(f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch.upper()} ({usdt} USDT)\nID: {order.get('id','—')}")
     except Exception as e:
-        await query.edit_message_text(f"❌ Ошибка покупки: {e}")
+        await q.edit_message_text(f"❌ Ошибка покупки: {e}")
 
 async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Отменено")
-    await query.edit_message_text("❌ Покупка отменена.")
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text("❌ Покупка отменена.")
 
 # ================== COMMANDS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cd = context.chat_data
-    cd["chat_id"] = update.effective_chat.id
-    cd["autoscan"] = True
+    context.chat_data["chat_id"] = update.effective_chat.id
+    context.chat_data["autoscan"] = True
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("pong ✅")
-
-async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.chat_data["autoscan"] = False
-    await update.message.reply_text("Автоскан ❌ отключён для этого чата.")
-
 async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("Сканирую...")
-    signals = await scan_all_pairs()
-    if not signals:
-        await msg.edit_text("Нет сигналов.")
-        return
+    msg = await update.message.reply_text("Сканирую пары...")
+    results = await scan_all_pairs(update.effective_chat.id)
+    if not results:
+        return await msg.edit_text("Нет сигналов.")
     await msg.delete()
-    for sig in signals:
-        text = (
-            f"{sig['symbol']}\n"
-            f"Профит: *{sig['spread']}%*\n"
-            f"Дешевле: {sig['cheap'].upper()} {sig['price_cheap']}\n"
-            f"Дороже: {sig['expensive'].upper()} {sig['price_expensive']}\n"
-            f"Объём 1ч: {sig['volume_1h']}M$"
-        )
+    for sig in results:
+        text = (f"*{sig['symbol']}*\nПрофит: *{sig['spread']}%*\n"
+                f"Купить: {sig['cheap'].upper()} {sig['price_cheap']}\n"
+                f"Продать: {sig['expensive'].upper()} {sig['price_expensive']}\n"
+                f"Объём 1ч: {sig['volume_1h']}M$")
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = []
-    for name, ex in exchanges.items():
+    lines = ["💰 Баланс:"]
+    for n, ex in exchanges.items():
         try:
-            bal = await ex.fetch_balance()
-            usdt_free = bal["USDT"]["free"]
-            usdt_total = bal["USDT"]["total"]
-            lines.append(f"{name.upper()}: {usdt_free:.2f} / {usdt_total:.2f} USDT")
+            b = await ex.fetch_balance()
+            lines.append(f"{n.upper()}: {b['USDT']['free']:.2f} / {b['USDT']['total']:.2f}")
         except Exception as e:
-            lines.append(f"{name.upper()}: ошибка {e}")
+            lines.append(f"{n.upper()}: {e}")
     await update.message.reply_text("\n".join(lines))
+
+async def scanlog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in scanlog_enabled:
+        scanlog_enabled.remove(chat_id)
+        await update.message.reply_text("🧱 Лог сканирования выключен.")
+    else:
+        scanlog_enabled.add(chat_id)
+        await update.message.reply_text("📡 Лог сканирования включён (реальное время).")
 
 # ================== AUTOSCAN ==================
 async def auto_scan():
-    global app
-    if not app:
-        return
+    for data in app.chat_data.values():
+        if data.get("autoscan"):
+            chat_id = data["chat_id"]
+            res = await scan_all_pairs(chat_id)
+            if not res:
+                continue
+            for sig in res:
+                text = (f"*{sig['symbol']}*\nПрофит: *{sig['spread']}%*\n"
+                        f"Купить: {sig['cheap'].upper()} {sig['price_cheap']}\n"
+                        f"Продать: {sig['expensive'].upper()} {sig['price_expensive']}\n"
+                        f"Объём 1ч: {sig['volume_1h']}M$")
+                await app.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
-    # чаты, где включен автоскан
-    target_chats = []
-    for chat_id, data in app.chat_data.items():
-        if data.get("chat_id") and data.get("autoscan", False):
-            target_chats.append(data["chat_id"])
-
-    if not target_chats:
-        return
-
-    log("Автоскан ...")
-    signals = await scan_all_pairs()
-    if not signals:
-        log("Сигналов нет")
-        return
-
-    for chat_id in target_chats:
-        for sig in signals:
-            text = (
-                f"{sig['symbol']}\n"
-                f"Профит: *{sig['spread']}%*\n"
-                f"Дешевле: {sig['cheap'].upper()} {sig['price_cheap']}\n"
-                f"Дороже: {sig['expensive'].upper()} {sig['price_expensive']}\n"
-                f"Объём 1ч: {sig['volume_1h']}M$"
-            )
-            try:
-                await app.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode="Markdown",
-                    reply_markup=get_buy_keyboard(sig),
-                )
-            except Exception as e:
-                log(f"Ошибка отправки в {chat_id}: {e}")
-
-# ================== MAIN ==================
-async def main():
-    global app
-    await init_exchanges()
-
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # команды
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(CommandHandler("scan", scan_cmd))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("balance", balance_cmd))
-    app.add_handler(CommandHandler("stop", stop_cmd))
-
-    # кнопки
-    app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
-    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
-    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
-
-  # ================== MAIN ==================
-async def main():
-    global app
-    await init_exchanges()
-
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # команды
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(CommandHandler("scan", scan_cmd))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("balance", balance_cmd))
-    app.add_handler(CommandHandler("stop", stop_cmd))
-
-    # кнопки
-    app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
-    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
-    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
-
-    # планировщик
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
-    scheduler.start()
-
-# --- Render port stub: Health server для Render ---
-from aiohttp import web
-
-async def healthcheck(request):
-    return web.Response(text="OK")
-
-# --- Render port stub: Health server для Render ---
-from aiohttp import web
-
-async def healthcheck(request):
-    return web.Response(text="OK")
+# ================== HEALTH ==================
+async def healthcheck(_): return web.Response(text="OK")
 
 async def start_health_server():
-    """Мини-сервер для Render (порт PORT+1, чтобы не конфликтовал с Telegram)"""
     port = int(os.environ.get("PORT", "8443")) + 1
     app = web.Application()
     app.add_routes([web.get("/", healthcheck)])
@@ -422,69 +273,41 @@ async def start_health_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"[Init] Health server listening on port {port}", flush=True)
-
+    log(f"[Init] Health server listening on port {port}")
 
 # ================== MAIN ==================
 def main():
-    # Создаём event loop и делаем его текущим
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
-    # --- старт health-сервера, чтобы Render видел порт ---
     loop.run_until_complete(start_health_server())
-
-    # --- инициализация бирж ---
     loop.run_until_complete(init_exchanges())
 
+    global app
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # команды
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("info", info))
-    app.add_handler(CommandHandler("scan", scan_cmd))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("balance", balance_cmd))
-    app.add_handler(CommandHandler("stop", stop_cmd))
+    handlers = [
+        ("start", start), ("info", info), ("scan", scan_cmd),
+        ("balance", balance_cmd), ("scanlog", scanlog_cmd)
+    ]
+    for cmd, func in handlers:
+        app.add_handler(CommandHandler(cmd, func))
 
-    # кнопки
     app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
     app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
 
-    # планировщик теперь знает о нашем loop
     scheduler = AsyncIOScheduler(event_loop=loop)
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # --- Webhook ---
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if not host:
-        raise RuntimeError("Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
-
     webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
-    log(f"Ставлю webhook: {webhook_url}")
     loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
 
-    log(f"Arbitrage Scanner {VERSION} запущен (webhook). Порт: {port}")
-
-    # блокирующий вызов — запускает сервер Telegram
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=TELEGRAM_BOT_TOKEN,
-        webhook_url=webhook_url,
-        drop_pending_updates=True
-    )
-
+    log(f"Arbitrage Scanner {VERSION} запущен. Порт: {port}")
+    app.run_webhook(listen="0.0.0.0", port=port, url_path=TELEGRAM_BOT_TOKEN, webhook_url=webhook_url)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
