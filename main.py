@@ -1,6 +1,6 @@
 # main.py — Arbitrage Scanner v5.3 (Render.com)
 # Добавлено:
-# • Кнопка BUY_EXCH (10 USDT)
+# • Кнопка BUY_EXCH (10 USDT) с подтверждением
 # • Команда /info
 # • Подробное описание при запуске и по /info
 
@@ -12,7 +12,7 @@ import ccxt.async_support as ccxt
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, CallbackQueryHandler
+    Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -60,6 +60,7 @@ INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 **Функции:**
 • Автоскан каждые {SCAN_INTERVAL} сек
 • Кнопка BUY_EXCH (10 USDT) для моментальной покупки на дешёвой бирже
+• Подтверждение перед покупкой
 • Проверка доступного баланса перед покупкой
 
 **Команды:**
@@ -159,6 +160,19 @@ async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not ex:
         await query.edit_message_text(f"❌ Биржа {exch_name.upper()} не инициализирована")
         return
+    confirm_btns = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{exch_name}:{symbol}:{usdt}"), InlineKeyboardButton("❌ Отмена", callback_data="cancel")]])
+    await query.edit_message_text(f"Подтвердить покупку {symbol} на {exch_name.upper()} на сумму {usdt} USDT?", reply_markup=confirm_btns)
+
+async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")
+    if len(data) != 4:
+        await query.edit_message_text("Ошибка данных подтверждения.")
+        return
+    _, exch_name, symbol, usdt = data
+    usdt = float(usdt)
+    ex = exchanges.get(exch_name)
     try:
         balance = await ex.fetch_balance()
         free_usdt = balance['USDT']['free']
@@ -172,6 +186,11 @@ async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch_name.upper()} по {price} ({usdt} USDT)\nTxID: {order.get('id','—')}")
     except Exception as e:
         await query.edit_message_text(f"❌ Ошибка покупки: {e}")
+
+async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Отменено")
+    await query.edit_message_text("❌ Покупка отменена пользователем.")
 
 # =============== AUTO SCAN ===============
 async def auto_scan():
@@ -222,6 +241,8 @@ async def main():
     app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern="^buy:"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern="^confirm:"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern="^cancel$"))
     scheduler = AsyncIOScheduler()
     scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL)
     scheduler.start()
