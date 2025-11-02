@@ -92,11 +92,37 @@ async def init_bitget():
 
 async def init_exchanges():
     global exchanges
-    exchanges = {
-        "bybit": await init_bybit(),
-        "mexc": await init_mexc(),
-        "bitget": await init_bitget(),
-    }
+    exchanges = {}
+
+    async def safe_init(name, func):
+        try:
+            ex = await func()
+            # пробуем загрузить рынки
+            await ex.load_markets()
+            log(f"{name.upper()} инициализирован ✅")
+            return ex
+        except Exception as e:
+            # проверяем 403 Forbidden или CloudFront
+            if "403" in str(e) or "CloudFront" in str(e):
+                log(f"{name.upper()} ❌ заблокирован (403 Forbidden) — исключаю из списка.")
+                return None
+            log(f"{name.upper()} ошибка инициализации: {e}")
+            return None
+
+    bybit = await safe_init("bybit", init_bybit)
+    mexc = await safe_init("mexc", init_mexc)
+    bitget = await safe_init("bitget", init_bitget)
+
+    # собираем только доступные
+    for name, ex in [("bybit", bybit), ("mexc", mexc), ("bitget", bitget)]:
+        if ex:
+            exchanges[name] = ex
+
+    if not exchanges:
+        raise RuntimeError("❌ Ни одна биржа не инициализирована — проверь API или блокировки")
+
+    log(f"Активные биржи: {', '.join(exchanges.keys())}")
+
 
 # ================== UTILS ==================
 def log(msg: str):
@@ -455,6 +481,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
