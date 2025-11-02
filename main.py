@@ -207,10 +207,39 @@ async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
     await q.edit_message_text("❌ Покупка отменена.")
 
 # ================== COMMANDS ==================
+
+# ================== SUMMARY ==================
+START_SUMMARY = f"""
+🧭 *Arbitrage Scanner {VERSION}*
+
+Сканирует топ-100 монет на *MEXC / BITGET / KUCOIN*
+Фильтры: профит ≥ {MIN_SPREAD}% и объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/h
+Автоскан каждые {SCAN_INTERVAL} сек
+
+⚙️ Команды:
+/scan — ручной скан
+/balance — показать USDT
+/scanlog — лог (вкл/выкл)
+/stop — остановить автоскан
+/info — параметры и помощь
+
+💡 Рекомендация:
+Сначала включи /scanlog и /scan — для проверки.
+Если всё ок — оставь автоскан активным.
+"""
+
+async def send_start_summary(chat_id):
+    try:
+        await app.bot.send_message(chat_id, START_SUMMARY, parse_mode="Markdown")
+    except:
+        pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data["chat_id"] = update.effective_chat.id
     context.chat_data["autoscan"] = True
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
+    await send_start_summary(update.effective_chat.id)
+
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
@@ -311,3 +340,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
