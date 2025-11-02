@@ -350,12 +350,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
 
-    # планировщик
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
-    scheduler.start()
-
-       # ========== WEBHOOK ==========
+    # ========== WEBHOOK ==========
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -367,15 +362,19 @@ async def main():
 
     log(f"Arbitrage Scanner {VERSION} запущен (webhook). Порт: {port}")
 
-    # Обязательно слушаем порт, чтобы Render 'увидел' открытый socket
-    await app.run_webhook(
+    # открываем порт, чтобы Render 'увидел' активный сокет
+    runner = asyncio.create_task(app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=TELEGRAM_BOT_TOKEN,
         webhook_url=webhook_url,
         drop_pending_updates=True
-    )
+    ))
+
+    # теперь безопасно запускаем планировщик
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
+    scheduler.start()
 
     # держим цикл живым
-    await asyncio.Future()
-
+    await runner
