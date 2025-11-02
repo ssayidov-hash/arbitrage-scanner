@@ -375,6 +375,30 @@ async def main():
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
+# ================== MAIN ==================
+def main():
+    asyncio.run(init_exchanges())
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # команды
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("info", info))
+    app.add_handler(CommandHandler("scan", scan_cmd))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
+
+    # кнопки
+    app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
+
+    # планировщик
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
+    scheduler.start()
+
     # ========== WEBHOOK ==========
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
@@ -383,12 +407,14 @@ async def main():
 
     webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
     log(f"Ставлю webhook: {webhook_url}")
-    await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+    # set_webhook — асинхронный вызов, выполняем внутри event loop
+    asyncio.run(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
 
     log(f"Arbitrage Scanner {VERSION} запущен (webhook). Порт: {port}")
 
-    # run_webhook блокирует поток → Render видит порт и не перезапускает
-    await app.run_webhook(
+    # !!! ключевой момент !!!
+    # run_webhook сам создаёт цикл и блокирует поток — без await
+    app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=TELEGRAM_BOT_TOKEN,
@@ -398,6 +424,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
 
