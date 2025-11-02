@@ -377,7 +377,15 @@ async def main():
 
 # ================== MAIN ==================
 def main():
-    asyncio.run(init_exchanges())
+    # Создаём event loop и делаем его текущим
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # --- старт health-сервера, чтобы Render видел порт ---
+    loop.run_until_complete(start_health_server())
+
+    # --- инициализация бирж ---
+    loop.run_until_complete(init_exchanges())
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -394,12 +402,12 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
 
-    # планировщик
-    scheduler = AsyncIOScheduler()
+    # планировщик теперь знает о нашем loop
+    scheduler = AsyncIOScheduler(event_loop=loop)
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # ========== WEBHOOK ==========
+    # --- Webhook ---
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -407,13 +415,11 @@ def main():
 
     webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
     log(f"Ставлю webhook: {webhook_url}")
-    # set_webhook — асинхронный вызов, выполняем внутри event loop
-    asyncio.run(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
+    loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
 
     log(f"Arbitrage Scanner {VERSION} запущен (webhook). Порт: {port}")
 
-    # !!! ключевой момент !!!
-    # run_webhook сам создаёт цикл и блокирует поток — без await
+    # блокирующий вызов — запускает сервер Telegram
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
@@ -425,23 +431,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-# --- Render port stub: открывает порт сразу при запуске ---
-from aiohttp import web
 
-async def healthcheck(request):
-    return web.Response(text="OK")
 
-async def start_health_server():
-    port = int(os.environ.get("PORT", "8443"))
-    app = web.Application()
-    app.add_routes([web.get("/", healthcheck)])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"[Init] Health server listening on port {port}")
-
-# запускаем health-сервер асинхронно перед запуском Telegram webhook
-asyncio.run(start_health_server())
 
 
