@@ -381,9 +381,15 @@ from aiohttp import web
 async def healthcheck(request):
     return web.Response(text="OK")
 
+# --- Render port stub: Health server для Render ---
+from aiohttp import web
+
+async def healthcheck(request):
+    return web.Response(text="OK")
+
 async def start_health_server():
-    """Мини-сервер, который открывает порт для Render"""
-    port = int(os.environ.get("PORT", "8443"))
+    """Мини-сервер для Render (порт PORT+1, чтобы не конфликтовал с Telegram)"""
+    port = int(os.environ.get("PORT", "8443")) + 1
     app = web.Application()
     app.add_routes([web.get("/", healthcheck)])
     runner = web.AppRunner(app)
@@ -391,6 +397,7 @@ async def start_health_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"[Init] Health server listening on port {port}", flush=True)
+
 
 # ================== MAIN ==================
 def main():
@@ -448,6 +455,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
