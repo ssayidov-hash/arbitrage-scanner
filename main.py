@@ -1,4 +1,9 @@
-# main.py — Arbitrage Scanner v5.2 (Render.com FINAL) + кнопка BUY_EXCH (10 USDT)
+# main.py — Arbitrage Scanner v5.3 (Render.com)
+# Добавлено:
+# • Кнопка BUY_EXCH (10 USDT)
+# • Команда /info
+# • Подробное описание при запуске и по /info
+
 import os
 import time
 import asyncio
@@ -43,6 +48,32 @@ exchanges = {}
 signal_cache = {}
 sent_messages = set()
 app = None
+VERSION = "v5.3"
+
+# =============== ОПИСАНИЕ ИНФО ===============
+INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
+
+**Описание:**
+Бот сканирует спотовые рынки BYBIT, MEXC и BITGET каждые {SCAN_INTERVAL} сек.
+Выявляет арбитражные возможности по парам USDT с прибылью ≥{MIN_SPREAD}% и объёмом ≥{MIN_VOLUME_1H/1000:.0f}k$ за 1ч.
+
+**Функции:**
+• Автоскан каждые {SCAN_INTERVAL} сек
+• Кнопка BUY_EXCH (10 USDT) для моментальной покупки на дешёвой бирже
+• Проверка доступного баланса перед покупкой
+
+**Команды:**
+/start — показать информацию
+/info — вывести информацию заново
+/scan — ручной скан
+/ping — проверка отклика
+/buy N [сумма] — покупка по сигналу N
+/balance — баланс USDT
+/stop — остановить автоскан
+
+**Формат сигналов:**
+BTC/USDT\nПрофит: 2.4%\nПокупка: BYBIT 27000.1\nПродажа: BITGET 27650.5\nОбъем 1ч: 5.3M$\n\n[BUY_BYBIT (10 USDT)] — кнопка покупки
+"""
 
 # =============== ИНИЦИАЛИЗАЦИЯ БИРЖ ===============
 async def init_bybit():
@@ -106,21 +137,14 @@ async def scan_all_pairs():
         fee_buy = FEE.get(cheap_ex, 0.001)
         fee_sell = FEE.get(expensive_ex, 0.001)
         net_profit = (max_price / min_price - 1) * 100 - (fee_buy + fee_sell) * 100
-        results.append({
-            'symbol': symbol,'spread': round(net_profit, 2),'cheap': cheap_ex,'expensive': expensive_ex,
-            'price_cheap': round(prices[cheap_ex], 6),'price_expensive': round(prices[expensive_ex], 6),
-            'volume_1h': round(min_vol / 1_000_000, 2),'first_seen': time.time()
-        })
+        results.append({'symbol': symbol,'spread': round(net_profit, 2),'cheap': cheap_ex,'expensive': expensive_ex,'price_cheap': round(prices[cheap_ex], 6),'price_expensive': round(prices[expensive_ex], 6),'volume_1h': round(min_vol / 1_000_000, 2),'first_seen': time.time()})
     results.sort(key=lambda x: x['spread'], reverse=True)
     log(f"Найдено сигналов: {len(results)}")
     return results[:10]
 
 # =============== КНОПКА ПОКУПКИ ===============
 def get_buy_keyboard(sig):
-    btn = InlineKeyboardButton(
-        text=f"BUY_{sig['cheap'].upper()} (10 USDT)",
-        callback_data=f"buy:{sig['cheap']}:{sig['symbol']}:10"
-    )
+    btn = InlineKeyboardButton(text=f"BUY_{sig['cheap'].upper()} (10 USDT)",callback_data=f"buy:{sig['cheap']}:{sig['symbol']}:10")
     return InlineKeyboardMarkup([[btn]])
 
 async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,9 +169,7 @@ async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         price = ticker['ask']
         amount = round(usdt / price, 6)
         order = await ex.create_market_buy_order(symbol, amount)
-        await query.edit_message_text(
-            f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch_name.upper()} по {price} ({usdt} USDT)\nTxID: {order.get('id','—')}"
-        )
+        await query.edit_message_text(f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch_name.upper()} по {price} ({usdt} USDT)\nTxID: {order.get('id','—')}")
     except Exception as e:
         await query.edit_message_text(f"❌ Ошибка покупки: {e}")
 
@@ -164,15 +186,6 @@ async def auto_scan():
     if not signals:
         log("Сигналов нет.")
         return
-    now = time.time()
-    new_cache = {}
-    for sig in signals:
-        key = sig["symbol"]
-        if key in signal_cache:
-            sig["first_seen"] = signal_cache[key]["first_seen"]
-        new_cache[key] = sig
-    signal_cache = new_cache
-    text = "\n\n".join([f"#{i+1} {s['symbol']}\nПрофит: {s['spread']}%\nПокупка: {s['cheap'].upper()} {s['price_cheap']}\nПродажа: {s['expensive'].upper()} {s['price_expensive']}\nОбъем 1ч: {s['volume_1h']}M$" for i,s in enumerate(signals)])
     for chat_id in chat_ids:
         for sig in signals:
             try:
@@ -183,7 +196,10 @@ async def auto_scan():
 # =============== КОМАНДЫ ===============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data['chat_id'] = update.effective_chat.id
-    await update.message.reply_text("Бот запущен. /scan для проверки.")
+    await update.message.reply_text(INFO_TEXT, parse_mode='Markdown')
+
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(INFO_TEXT, parse_mode='Markdown')
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Сканирую...")
@@ -203,12 +219,13 @@ async def main():
     await init_exchanges()
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("info", info))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern="^buy:"))
     scheduler = AsyncIOScheduler()
     scheduler.add_job(auto_scan, 'interval', seconds=SCAN_INTERVAL)
     scheduler.start()
-    log("Telegram-бот v5.2 запущен. Автоскан каждые 2 мин.")
+    log(f"Arbitrage Scanner {VERSION} запущен. Автоскан каждые {SCAN_INTERVAL} сек.")
     await app.bot.delete_webhook(drop_pending_updates=True)
     await app.run_polling()
 
