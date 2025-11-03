@@ -445,13 +445,14 @@ async def auto_scan():
 async def start_health_server():
     """Мини-сервер для Render (на том же порту, чтобы пройти health-check)"""
     port = int(os.environ.get("PORT", "10000"))  # без +1 !
-    app = web.Application()
-    app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
-    runner = web.AppRunner(app)
+    health_app = web.Application()  # <-- было app = web.Application()
+    health_app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
+    runner = web.AppRunner(health_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     log(f"[Init] Health server listening on port {port}")
+
 
 # ================== MAIN ==================
 async def close_all_exchanges():
@@ -570,3 +571,4 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
