@@ -444,7 +444,7 @@ async def auto_scan():
 
 async def start_health_server():
     """Мини-сервер для Render (на том же порту, чтобы пройти health-check)"""
-    port = int(os.environ.get("PORT", "10000"))  # без +1 !
+    port = int(os.environ.get("PORT", "10000"))
     health_app = web.Application()  # <-- было app = web.Application()
     health_app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
     runner = web.AppRunner(health_app)
@@ -491,11 +491,11 @@ async def main_async():
     try:
         # === Health server (Render требует, чтобы хоть один порт слушался) ===
         await start_health_server()
+        log("🌐 Health server запущен и слушает порт — Render видит процесс.")
 
         # === Инициализация бирж ===
         await init_exchanges()
 
-        # === Telegram App ===
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -582,6 +582,7 @@ def main():
     finally:
         loop.run_until_complete(close_all_exchanges())
         loop.close()
+
 
 
 
