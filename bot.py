@@ -458,71 +458,70 @@ async def keep_alive():
     while True:
         await asyncio.sleep(3600)
 
-# ================== MAIN ==================
+# ================== ENTRY POINT ==================
+import signal
+
 async def main_async():
     try:
-        # Health сервер на PORT (важно для Render)
         await start_health_server()
-        log("🌐 Health server готов.")
-
-        # Биржи
         await init_exchanges()
 
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # Команды
-        app.add_handler(CommandHandler("start", start_cmd))
-        app.add_handler(CommandHandler("info", info_cmd))
-        app.add_handler(CommandHandler("ping", ping_cmd))
-        app.add_handler(CommandHandler("scan", scan_cmd))
-        app.add_handler(CommandHandler("balance", balance_cmd))
-        app.add_handler(CommandHandler("scanlog", scanlog_cmd))
-        app.add_handler(CommandHandler("status", status_cmd))
-        app.add_handler(CommandHandler("stop", stop_cmd))
+        # === Telegram уведомление ===
+        CHAT_ID = env_vars.get("CHAT_ID")
+        if CHAT_ID:
+            try:
+                await app.bot.send_message(int(CHAT_ID), f"✅ Arbitrage Scanner {VERSION} запущен на Render")
+                log(f"Отправлено уведомление в Telegram ({CHAT_ID})")
+            except Exception as e:
+                log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
 
-        # Колбэки BUY
+        # === Хендлеры ===
+        handlers = [
+            ("start", start),
+            ("info", info),
+            ("scan", scan_cmd),
+            ("balance", balance_cmd),
+            ("scanlog", scanlog_cmd),
+            ("status", status_cmd),
+            ("ping", ping_cmd),
+            ("stop", stop_cmd),
+        ]
+        for cmd, func in handlers:
+            app.add_handler(CommandHandler(cmd, func))
+
         app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
         app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
         app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
 
-        # Планировщик автосканов
         scheduler = AsyncIOScheduler()
         scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
         scheduler.start()
 
-        # Webhook (Render)
-        port = int(os.environ.get("PORT", "8443"))
+        # === Webhook ===
+        port = int(os.environ.get("PORT", "10000"))
         host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-        if not host:
-            raise RuntimeError("❌ Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
-
         webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
         await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
 
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
 
-        # Уведомление в чат (опционально)
-        chat_id_env = env_vars.get("CHAT_ID")
-        if chat_id_env:
-            try:
-                await app.bot.send_message(int(chat_id_env), f"✅ Arbitrage Scanner {VERSION} запущен на Render")
-            except Exception as e:
-                log(f"⚠️ Не удалось уведомить: {e}")
+        # === Грейсфул выключение ===
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
 
-        # Запуск вебхука
-        asyncio.create_task(app.run_webhook(
+        # === Запускаем webhook (главный цикл) ===
+        await app.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_BOT_TOKEN,
             webhook_url=webhook_url,
-            drop_pending_updates=True
-        ))
-
-        log("💡 Render видит открытый порт. Ожидание запросов Telegram…")
-        await keep_alive()
+        )
 
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
@@ -530,21 +529,6 @@ async def main_async():
         await close_all_exchanges()
         log("🧹 Завершение работы.")
 
-def main():
-    loop = asyncio.get_event_loop()
-
-    # Graceful shutdown
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
-
-    try:
-        loop.run_until_complete(main_async())
-    except (KeyboardInterrupt, SystemExit):
-        log("⛔ Остановлено пользователем.")
-    finally:
-        loop.run_until_complete(close_all_exchanges())
-        loop.close()
 
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main_async())
