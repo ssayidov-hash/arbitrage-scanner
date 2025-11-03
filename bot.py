@@ -469,6 +469,22 @@ async def keep_alive():
     while True:
         await asyncio.sleep(3600)
 
+# ================== MAIN ==================
+async def close_all_exchanges():
+    """Закрывает все активные сессии ccxt"""
+    for name, ex in exchanges.items():
+        try:
+            await ex.close()
+            log(f"{name.upper()} закрыт ✅")
+        except Exception as e:
+            log(f"{name.upper()} ошибка закрытия: {e}")
+
+
+async def keep_alive():
+    """Постоянно держит процесс живым (Render должен видеть открытый порт)"""
+    while True:
+        await asyncio.sleep(3600)
+
 
 async def main_async():
     try:
@@ -478,18 +494,9 @@ async def main_async():
         # === Инициализация бирж ===
         await init_exchanges()
 
+        # === Telegram App ===
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-        CHAT_ID = env_vars.get("CHAT_ID")
-        if CHAT_ID:
-            try:
-                await app.bot.send_message(int(CHAT_ID), f"✅ Arbitrage Scanner {VERSION} запущен на Render")
-                log(f"Отправлено уведомление в Telegram ({CHAT_ID})")
-            except Exception as e:
-                log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
-
-
 
         # --- Команды ---
         handlers = [
@@ -536,6 +543,15 @@ async def main_async():
             drop_pending_updates=True
         ))
 
+        # --- Сообщение о запуске (только теперь, когда app активен) ---
+        CHAT_ID = env_vars.get("CHAT_ID")
+        if CHAT_ID:
+            try:
+                await app.bot.send_message(int(CHAT_ID), f"✅ Arbitrage Scanner {VERSION} запущен на Render")
+                log(f"Отправлено уведомление в Telegram ({CHAT_ID})")
+            except Exception as e:
+                log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
+
         log("💡 Render видит открытый порт. Ожидание запросов Telegram...")
 
         # --- Держим процесс живым навсегда ---
@@ -554,12 +570,3 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
-
-
-
-
-
-
-
-
-
