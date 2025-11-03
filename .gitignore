@@ -1,15 +1,7 @@
-# Ключи
-keys.py
-
-# Логи и кэш
-spreads_log.txt
-signals_cache.json
-
-# Виртуальное окружение
-venv/
 __pycache__/
+.env
+*.log
 *.pyc
-
-# IDE
-.idea/
+.DS_Store
 .vscode/
+.idea/
