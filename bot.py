@@ -354,6 +354,23 @@ async def main_async():
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
 
+        # === Инструкция при запуске ===
+        log("===========================================================")
+        log("📘 ИНСТРУКЦИЯ:")
+        log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч")
+        log(f"Автоскан каждые {SCAN_INTERVAL} сек (если включён)")
+        log("")
+        log("🔹 Команды Telegram:")
+        log("/start — инфо + включить автоскан")
+        log("/scan — разовый скан (топ-10 сигналов)")
+        log("/balance — баланс по биржам")
+        log("/status — статус подключений")
+        log("/scanlog — вкл/выкл лог сканирования")
+        log("/stop — выключить автоскан")
+        log("/info — справка")
+        log("/ping — проверить связь")
+        log("===========================================================")
+
         await app.run_webhook(listen="0.0.0.0", port=port, url_path=TELEGRAM_BOT_TOKEN, webhook_url=webhook_url)
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
@@ -361,5 +378,10 @@ async def main_async():
         await close_all_exchanges()
         log("🧹 Завершение работы.")
 
+
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main_async())
+    except KeyboardInterrupt:
+        pass
