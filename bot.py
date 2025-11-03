@@ -566,9 +566,22 @@ async def main_async():
         log("🧹 Завершение работы.")
 
 
+import signal
+
 def main():
+    loop = asyncio.get_event_loop()
+
+    # --- Обработка SIGTERM (Render graceful shutdown) ---
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
+
     try:
-        asyncio.run(main_async())
+        loop.run_until_complete(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+    finally:
+        loop.run_until_complete(close_all_exchanges())
+        loop.close()
+
+
 
