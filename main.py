@@ -87,11 +87,11 @@ INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 /scan — ручной скан
 /balance — баланс по биржам
 /scanlog — вкл/выкл логи сканирования
+/status — показать статус подключения бирж
 /info — параметры и справка
 /stop — отключить автоскан
 /ping — проверить связь
 """
-
 
 # ================== UTILS ==================
 def log(msg: str):
@@ -320,7 +320,7 @@ async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
 START_SUMMARY = f"""
 🧭 *Arbitrage Scanner {VERSION}*
 
-Сканирует топ-100 монет на *MEXC / BITGET / KUCOIN*
+Сканирует топ монет на *MEXC / BITGET / OKX / KRAKEN / HUOBI / BIGONE* по USDT-парам.
 Фильтры: профит ≥ {MIN_SPREAD}% и объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/h
 Автоскан каждые {SCAN_INTERVAL} сек
 
@@ -521,6 +521,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
