@@ -18,7 +18,7 @@
 #   • Webhook auto-set via TELEGRAM_BOT_TOKEN
 #   • Health server: PORT+1 (для Render)
 # ================================================================
-# main.py — Arbitrage Scanner v5.5 (Webhook, Render) — FIXED
+# main.py — Arbitrage Scanner v5.6 (Webhook, Render) — FIXED
 import os
 import asyncio
 import ccxt.async_support as ccxt
@@ -32,7 +32,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
 MIN_SPREAD = 1.2
-MIN_VOLUME_1H = 100_000
+MIN_VOLUME_1H = 500_000
 SCAN_INTERVAL = 120
 VERSION = "v5.5"
 
@@ -521,6 +521,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
