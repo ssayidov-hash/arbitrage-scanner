@@ -395,7 +395,7 @@ async def close_all_exchanges():
 
 # ================== MAIN ==================
 async def close_all_exchanges():
-    """Закрывает все сессии ccxt"""
+    """Закрывает все активные сессии ccxt"""
     for name, ex in exchanges.items():
         try:
             await ex.close()
@@ -405,9 +405,9 @@ async def close_all_exchanges():
 
 
 async def main_async():
-    """Основной асинхронный цикл"""
+    """Основной цикл бота"""
     try:
-        # Health сервер (для Render)
+        # Health server для Render
         await start_health_server()
 
         # Инициализация бирж
@@ -430,32 +430,35 @@ async def main_async():
         app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
 
-        # Планировщик
+        # --- Планировщик ---
         scheduler = AsyncIOScheduler()
         scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
         scheduler.start()
 
-        # Webhook
+        # --- Webhook ---
         port = int(os.environ.get("PORT", "8443"))
         host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
         if not host:
-            raise RuntimeError("Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
+            raise RuntimeError("❌ Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
 
         webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
         await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
 
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
-        log("💡 Ожидание запросов от Telegram...")
+        log("💡 Ожидание Telegram-сообщений...")
 
-        # Этот вызов держит процесс живым — Render не завершит контейнер
-        await app.run_webhook(
+        # --- Запускаем webhook в фоне ---
+        asyncio.create_task(app.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_BOT_TOKEN,
             webhook_url=webhook_url,
             drop_pending_updates=True
-        )
+        ))
+
+        # --- Держим процесс активным (иначе Render завершит) ---
+        await asyncio.Event().wait()
 
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
@@ -465,8 +468,10 @@ async def main_async():
 
 
 def main():
-    """Точка входа Render"""
+    """Точка входа"""
     try:
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
+
