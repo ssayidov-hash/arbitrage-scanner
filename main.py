@@ -66,10 +66,10 @@ env_vars = {
 
 
 # ================== GLOBALS ==================
-exchanges = {}
-exchange_status = {}  # {'bitget': {'status': '✅', 'error': None, 'ex': <ccxt obj>}}
+exchanges = {}             # активные (успешно инициализированные) биржи
+exchange_status = {}       # все биржи со статусами ✅ ⚪ ❌
 pending_trades = {}        # chat_id -> {cheap, sell, symbol, usdt?}
-app = None
+app = None                 # Telegram Application instance
 scanlog_enabled = set()    # чаты, где включён лог сканирования
 
 
@@ -521,6 +521,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
