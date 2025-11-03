@@ -403,75 +403,76 @@ async def close_all_exchanges():
         except Exception as e:
             log(f"{name.upper()} ошибка при закрытии: {e}")
 
+
+async def run_bot():
+    """Асинхронный запуск основного цикла Telegram + Webhook"""
+    global app
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # --- Команды ---
+    handlers = [
+        ("start", start),
+        ("info", info),
+        ("scan", scan_cmd),
+        ("balance", balance_cmd),
+        ("scanlog", scanlog_cmd),
+        ("stop", stop_cmd),
+    ]
+    for cmd, func in handlers:
+        app.add_handler(CommandHandler(cmd, func))
+
+    # --- Callback-и и ввод суммы ---
+    app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
+    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
+
+    # --- Планировщик ---
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
+    scheduler.start()
+
+    # --- Webhook ---
+    port = int(os.environ.get("PORT", "8443"))
+    host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    if not host:
+        raise RuntimeError("❌ Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
+
+    webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
+    await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+
+    log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
+    log(f"Webhook установлен: {webhook_url}")
+
+    # --- Запуск webhook (не завершается) ---
+    await app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=TELEGRAM_BOT_TOKEN,
+        webhook_url=webhook_url,
+        drop_pending_updates=True
+    )
+
+
 def main():
+    """Главная точка запуска Render WebService"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    try:
-        # --- Health server для Render ---
-        loop.run_until_complete(start_health_server())
+    async def runner():
+        try:
+            await start_health_server()
+            await init_exchanges()
+            await run_bot()
+        except Exception as e:
+            log(f"❌ Ошибка в main(): {e}")
+        finally:
+            await close_all_exchanges()
+            log("🧹 Завершено.")
 
-        # --- Инициализация бирж ---
-        loop.run_until_complete(init_exchanges())
-
-        global app
-        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-        # --- Команды ---
-        handlers = [
-            ("start", start),
-            ("info", info),
-            ("scan", scan_cmd),
-            ("balance", balance_cmd),
-            ("scanlog", scanlog_cmd),
-            ("stop", stop_cmd),
-        ]
-        for cmd, func in handlers:
-            app.add_handler(CommandHandler(cmd, func))
-
-        # --- Callback-и и ввод суммы ---
-        app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
-        app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
-        app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
-
-        # --- Планировщик ---
-        scheduler = AsyncIOScheduler(event_loop=loop)
-        scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
-        scheduler.start()
-
-        # --- Webhook ---
-        port = int(os.environ.get("PORT", "8443"))
-        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-        if not host:
-            raise RuntimeError("❌ Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
-
-        webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
-        loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
-
-        log(f"Arbitrage Scanner {VERSION} запущен. Порт: {port}")
-        log(f"Webhook установлен: {webhook_url}")
-        log("💡 Бот активен, ожидает сообщения...")
-
-        # --- Запуск webhook в фоне ---
-        loop.create_task(app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=TELEGRAM_BOT_TOKEN,
-            webhook_url=webhook_url,
-            drop_pending_updates=True
-        ))
-
-        # --- Держим Render-процесс живым ---
-        loop.run_forever()
-
-    except Exception as e:
-        log(f"❌ Ошибка в main(): {e}")
-
-    finally:
-        log("🧹 Завершаю работу, закрываю соединения...")
-        loop.run_until_complete(close_all_exchanges())
-        loop.close()
+    log("🚀 Запуск Arbitrage Scanner...")
+    loop.run_until_complete(runner())
+    loop.run_forever()
 
 
 
