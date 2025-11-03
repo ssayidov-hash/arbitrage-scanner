@@ -382,46 +382,58 @@ async def start_health_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     log(f"[Init] Health server listening on port {port}")
+    
+# ================== CLOSE EXCHANGES ==================
+async def close_all_exchanges():
+    """Закрывает все соединения с биржами, чтобы не было предупреждений ccxt"""
+    for name, ex in exchanges.items():
+        try:
+            await ex.close()
+            log(f"{name.upper()} соединение закрыто.")
+        except Exception as e:
+            log(f"{name.upper()} ошибка при закрытии: {e}")
 
 # ================== MAIN ==================
 def main():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_health_server())
-    loop.run_until_complete(init_exchanges())
 
-    global app
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    try:
+        loop.run_until_complete(start_health_server())
+        loop.run_until_complete(init_exchanges())
 
-    # команды
-    for cmd, func in [
-        ("start", start), ("info", info), ("scan", scan_cmd),
-        ("balance", balance_cmd), ("scanlog", scanlog_cmd), ("stop", stop_cmd)
-    ]:
-        app.add_handler(CommandHandler(cmd, func))
+        global app
+        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # кнопки и ввод суммы
-    app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
-    app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
-    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
+        handlers = [
+            ("start", start), ("info", info), ("scan", scan_cmd),
+            ("balance", balance_cmd), ("scanlog", scanlog_cmd)
+        ]
+        for cmd, func in handlers:
+            app.add_handler(CommandHandler(cmd, func))
 
-    # планировщик
-    scheduler = AsyncIOScheduler(event_loop=loop)
-    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
-    scheduler.start()
+        app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
+        app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
+        app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
 
-    # webhook
-    port = int(os.environ.get("PORT", "8443"))
-    host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if not host:
-        raise RuntimeError("Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
-    webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
-    loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
+        scheduler = AsyncIOScheduler(event_loop=loop)
+        scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
+        scheduler.start()
 
-    log(f"Arbitrage Scanner {VERSION} запущен. Порт: {port}")
-    app.run_webhook(listen="0.0.0.0", port=port, url_path=TELEGRAM_BOT_TOKEN, webhook_url=webhook_url)
+        port = int(os.environ.get("PORT", "8443"))
+        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+        webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
+        loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
 
-if __name__ == "__main__":
-    main()
+        log(f"Arbitrage Scanner {VERSION} запущен. Порт: {port}")
+        app.run_webhook(listen="0.0.0.0", port=port, url_path=TELEGRAM_BOT_TOKEN, webhook_url=webhook_url)
+
+    except Exception as e:
+        log(f"Ошибка в main(): {e}")
+
+    finally:
+        log("Закрываю соединения с биржами...")
+        loop.run_until_complete(close_all_exchanges())
+        loop.close()
 
