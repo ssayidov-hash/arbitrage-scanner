@@ -2,105 +2,63 @@ services:
   - type: web
     name: arbitrage-scanner
     env: python
-    region: singapore
     plan: free
+    autoDeploy: true
+
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
-    autoDeploy: true
-    healthCheckPath: /webhook
+
     envVars:
-      # === TELEGRAM ===
+      # === Telegram ===
       TELEGRAM_BOT_TOKEN:
-        fromDatabase:
-          name: secrets-db
-          key: TELEGRAM_BOT_TOKEN
+        sync: false
       CHAT_ID:
-        fromDatabase:
-          name: secrets-db
-          key: CHAT_ID
+        sync: false
 
       # === MEXC ===
       MEXC_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: MEXC_API_KEY
+        sync: false
       MEXC_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: MEXC_API_SECRET
+        sync: false
 
       # === BITGET ===
       BITGET_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: BITGET_API_KEY
+        sync: false
       BITGET_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: BITGET_API_SECRET
+        sync: false
       BITGET_API_PASSPHRASE:
-        fromDatabase:
-          name: secrets-db
-          key: BITGET_API_PASSPHRASE
+        sync: false
 
       # === KUCOIN ===
       KUCOIN_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: KUCOIN_API_KEY
+        sync: false
       KUCOIN_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: KUCOIN_API_SECRET
+        sync: false
       KUCOIN_API_PASS:
-        fromDatabase:
-          name: secrets-db
-          key: KUCOIN_API_PASS
+        sync: false
 
       # === OKX ===
       OKX_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: OKX_API_KEY
+        sync: false
       OKX_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: OKX_API_SECRET
+        sync: false
       OKX_API_PASS:
-        fromDatabase:
-          name: secrets-db
-          key: OKX_API_PASS
+        sync: false
 
       # === HUOBI ===
       HUOBI_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: HUOBI_API_KEY
+        sync: false
       HUOBI_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: HUOBI_API_SECRET
+        sync: false
 
       # === BIGONE ===
       BIGONE_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: BIGONE_API_KEY
+        sync: false
       BIGONE_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: BIGONE_API_SECRET
+        sync: false
 
       # === BYBIT ===
       BYBIT_API_KEY:
-        fromDatabase:
-          name: secrets-db
-          key: BYBIT_API_KEY
+        sync: false
       BYBIT_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          key: BYBIT_API_SECRET
-      BYBIT_API_PASSPHRASE:
-        fromDatabase:
-          name: secrets-db
-          key: BYBIT_API_PASSPHRASE
+        sync: false
