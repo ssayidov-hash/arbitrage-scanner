@@ -357,7 +357,7 @@ async def main():
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # Handlers
+        # === ТВОИ ХЕНДЛЕРЫ (оставь как есть!) ===
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("info", info))
         app.add_handler(CommandHandler("scan", scan_cmd))
@@ -379,9 +379,8 @@ async def main():
         # === RENDER WEBHOOK ===
         webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
         if not webhook_url:
-            raise RuntimeError("RENDER_EXTERNAL_URL не найден. Убедись, что это Web Service.")
+            raise RuntimeError("RENDER_EXTERNAL_URL не найден.")
         webhook_url = f"{webhook_url.rstrip('/')}/webhook"
-
         port = int(os.environ.get("PORT", 10000))
 
         await app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
@@ -396,12 +395,7 @@ async def main():
                 log(f"Не удалось уведомить: {e}")
 
         log(f"Слушаю порт {port}...")
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url
-        )
+        return app, port, webhook_url
 
     except Exception as e:
         log(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
@@ -409,5 +403,17 @@ async def main():
     finally:
         await close_all_exchanges()
 
+# ================== ЗАПУСК (ЭТОТ БЛОК — В САМЫЙ КОНЕЦ!) ==================
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Render запускает `python bot.py` → мы возвращаем app и запускаем webhook отдельно
+    app, port, webhook_url = asyncio.run(main())
+    
+    # Запускаем webhook ВНЕ main() — чтобы не было двойного event loop
+    asyncio.run(
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="/webhook",
+            webhook_url=webhook_url
+        )
+    )
