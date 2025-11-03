@@ -14,6 +14,7 @@ from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     CallbackQueryHandler, MessageHandler, filters
 )
+from telegram.error import TimedOut, RetryAfter, NetworkError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
@@ -349,7 +350,18 @@ async def main_async():
         port = int(os.environ.get("PORT", "10000"))
         host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
         webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
-        await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+
+        # Повторные попытки установки webhook
+        for attempt in range(3):
+            try:
+                await app.bot.set_webhook(webhook_url, drop_pending_updates=True, timeout=30)
+                break
+            except (TimedOut, RetryAfter, NetworkError) as e:
+                log(f"⚠️ Попытка {attempt+1}/3 установки webhook не удалась ({e}). Повтор через 5 сек...")
+                await asyncio.sleep(5)
+        else:
+            log("❌ Не удалось установить webhook после 3 попыток.")
+            return
 
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
@@ -381,7 +393,12 @@ async def main_async():
 
 if __name__ == "__main__":
     try:
-        loop = asyncio.get_event_loop()
+        # избегаем DeprecationWarning: "There is no current event loop"
+        try:
+            loop = asyncio.get_event_loop_policy().get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         loop.run_until_complete(main_async())
     except KeyboardInterrupt:
         pass
