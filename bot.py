@@ -150,7 +150,7 @@ async def init_exchanges():
         "bitget": (ccxt.bitget, {"apiKey": env_vars.get("BITGET_API_KEY"), "secret": env_vars.get("BITGET_API_SECRET"), "password": env_vars.get("BITGET_API_PASSPHRASE")}),
         "kucoin": (ccxt.kucoin, {"apiKey": env_vars.get("KUCOIN_API_KEY"), "secret": env_vars.get("KUCOIN_API_SECRET"), "password": env_vars.get("KUCOIN_API_PASS")}),
         "okx":    (ccxt.okx,    {"apiKey": env_vars.get("OKX_API_KEY"),    "secret": env_vars.get("OKX_API_SECRET"),    "password": env_vars.get("OKX_API_PASS")}),
-        "huobi":  (ccxt.huobi,  {"apiKey": env_vars.get("HUOBI_API_KEY"),  "secret": env_vars.get("HUOBI_API_SECRET")}),
+        "huobi": (ccxt.huobi, {"apiKey": ..., "secret": ..., "options": {"defaultType": "spot"}}),
         "bigone": (ccxt.bigone, {"apiKey": env_vars.get("BIGONE_API_KEY"), "secret": env_vars.get("BIGONE_API_SECRET")}),
         "bybit":  (ccxt.bybit,  {"apiKey": env_vars.get("BYBIT_API_KEY"),  "secret": env_vars.get("BYBIT_API_SECRET")}),
     }
@@ -510,10 +510,16 @@ async def main_async():
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
 
-        # === Грейсфул выключение ===
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
+
+        try:
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
+        except NotImplementedError:
+            
+    # Windows / Render fallback (без signal handlers)
+    log("⚠️ Signal handlers не поддерживаются в этой среде.")
+
 
         # === Запускаем webhook (главный цикл) ===
         await app.run_webhook(
@@ -532,3 +538,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+
