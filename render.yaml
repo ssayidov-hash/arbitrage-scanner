@@ -1,71 +1,90 @@
 services:
   - type: web
-    name: arbitrage scanner
+    name: arbitrage-scanner
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     plan: free
     autoDeploy: true
-
     envVars:
       # === TELEGRAM ===
       TELEGRAM_BOT_TOKEN:
         fromDatabase:
           name: secrets-db
-          property: TELEGRAM_BOT_TOKEN
+          key: TELEGRAM_BOT_TOKEN  # ← ИСПРАВЛЕНО: key, не property
+      CHAT_ID:
+        fromDatabase:
+          name: secrets-db
+          key: CHAT_ID
 
       # === MEXC ===
       MEXC_API_KEY:
         fromDatabase:
           name: secrets-db
-          property: MEXC_API_KEY
+          key: MEXC_API_KEY
       MEXC_API_SECRET:
         fromDatabase:
           name: secrets-db
-          property: MEXC_API_SECRET
+          key: MEXC_API_SECRET
 
       # === BITGET ===
       BITGET_API_KEY:
         fromDatabase:
           name: secrets-db
-          property: BITGET_API_KEY
+          key: BITGET_API_KEY
       BITGET_API_SECRET:
         fromDatabase:
           name: secrets-db
-          property: BITGET_API_SECRET
+          key: BITGET_API_SECRET
       BITGET_API_PASSPHRASE:
         fromDatabase:
           name: secrets-db
-          property: BITGET_API_PASSPHRASE
+          key: BITGET_API_PASSPHRASE
 
       # === KUCOIN ===
       KUCOIN_API_KEY:
         fromDatabase:
           name: secrets-db
-          property: KUCOIN_API_KEY
+          key: KUCOIN_API_KEY
       KUCOIN_API_SECRET:
         fromDatabase:
           name: secrets-db
-          property: KUCOIN_API_SECRET
+          key: KUCOIN_API_SECRET
       KUCOIN_API_PASS:
         fromDatabase:
           name: secrets-db
-          property: KUCOIN_API_PASS
+          key: KUCOIN_API_PASS
 
       # === OKX ===
       OKX_API_KEY:
         fromDatabase:
           name: secrets-db
-          property: OKX_API_KEY
+          key: OKX_API_KEY
       OKX_API_SECRET:
         fromDatabase:
           name: secrets-db
-          property: OKX_API_SECRET
+          key: OKX_API_SECRET
       OKX_API_PASS:
-        fromDataba
+        fromDatabase:
+          name: secrets-db
+          key: OKX_API_PASS
 
+      # === HUOBI ===
+      HUOBI_API_KEY:
+        fromDatabase:
+          name: secrets-db
+          key: HUOBI_API_KEY
+      HUOBI_API_SECRET:
+        fromDatabase:
+          name: secrets-db
+          key: HUOBI_API_SECRET
 
-
-
-
-
+      # === BIGONE ===
+      BIGONE_API_KEY:
+        fromDatabase:
+          name: secrets-db
+          key: BIGONE_API_KEY
+      BIGONE_API_SECRET:
+        fromDatabase:
+          name: secrets-db
+          key: BIGONE_API_SECRET
