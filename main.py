@@ -34,7 +34,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 MIN_SPREAD = 1.2
 MIN_VOLUME_1H = 500_000
 SCAN_INTERVAL = 120
-VERSION = "v5.5"
+VERSION = "v5.6"
 
 env_vars = {
     # --- Основные биржи ---
@@ -64,7 +64,7 @@ env_vars = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
 }
 
-
+TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 # ================== GLOBALS ==================
 exchanges = {}             # активные (успешно инициализированные) биржи
 exchange_status = {}       # все биржи со статусами ✅ ⚪ ❌
@@ -148,6 +148,9 @@ async def init_exchanges():
 
     active = [k for k, v in exchange_status.items() if v["status"] == "✅"]
     log(f"Активные биржи: {', '.join(active) if active else '—'}")
+    total = len(exchange_status)
+    log(f"Инициализация завершена: {len(active)}/{total} бирж активны.")
+
 
 # ================== SCANNER ==================
 async def get_top_symbols(exchange, top_n=100):
@@ -343,7 +346,9 @@ async def send_start_summary(chat_id):
         pass
 
 # ================== COMMANDS ==================
-        
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"✅ Я на связи! Версия: {VERSION}")
+
 # ================== STATUS ==================
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает состояние подключения ко всем биржам"""
@@ -431,8 +436,6 @@ async def auto_scan():
                 await app.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
 # ================== HEALTH ==================
-async def healthcheck(_): 
-    return web.Response(text="OK")
 
 async def start_health_server():
     """Мини-сервер для Render (на том же порту, чтобы пройти health-check)"""
@@ -444,17 +447,6 @@ async def start_health_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     log(f"[Init] Health server listening on port {port}")
-
-    
-# ================== CLOSE EXCHANGES ==================
-async def close_all_exchanges():
-    """Закрывает все соединения с биржами, чтобы не было предупреждений ccxt"""
-    for name, ex in exchanges.items():
-        try:
-            await ex.close()
-            log(f"{name.upper()} соединение закрыто.")
-        except Exception as e:
-            log(f"{name.upper()} ошибка при закрытии: {e}")
 
 # ================== MAIN ==================
 async def close_all_exchanges():
@@ -492,7 +484,9 @@ async def main_async():
             ("balance", balance_cmd),
             ("scanlog", scanlog_cmd),
             ("status", status_cmd),
+            ("ping", ping_cmd),
         ]
+
         for cmd, func in handlers:
             app.add_handler(CommandHandler(cmd, func))
 
@@ -546,6 +540,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
