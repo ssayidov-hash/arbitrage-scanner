@@ -104,7 +104,13 @@ async def send_log(chat_id, msg):
 
 # ================== INIT ==================
 async def init_exchanges():
+    """Инициализация всех бирж с логами статусов"""
     async def try_init(name, ex_class, **kwargs):
+        # если ключей нет — просто пропускаем
+        if not any(kwargs.values()):
+            log(f"{name.upper()} ⚪ пропущен — нет API-ключей")
+            return None
+
         try:
             ex = ex_class(kwargs)
             await ex.load_markets()
@@ -112,64 +118,35 @@ async def init_exchanges():
             return ex
         except Exception as e:
             log(f"{name.upper()} ❌ {e}")
+            try:
+                # корректно закрываем соединение, если неудача
+                await ex.close()
+            except:
+                pass
             return None
 
     global exchanges
     exchanges = {}
 
-    # --- Основные биржи ---
+    # --- список поддерживаемых бирж ---
     candidates = {
-        "mexc": (ccxt.mexc, {
-            "apiKey": env_vars["MEXC_API_KEY"],
-            "secret": env_vars["MEXC_API_SECRET"],
-            "enableRateLimit": True
-        }),
-        "bitget": (ccxt.bitget, {
-            "apiKey": env_vars["BITGET_API_KEY"],
-            "secret": env_vars["BITGET_API_SECRET"],
-            "password": env_vars["BITGET_API_PASSPHRASE"],
-            "enableRateLimit": True
-        }),
-        "kucoin": (ccxt.kucoin, {
-            "apiKey": env_vars["KUCOIN_API_KEY"],
-            "secret": env_vars["KUCOIN_API_SECRET"],
-            "password": env_vars["KUCOIN_API_PASS"],
-            "enableRateLimit": True
-        }),
-        "okx": (ccxt.okx, {
-            "apiKey": env_vars.get("OKX_API_KEY"),
-            "secret": env_vars.get("OKX_API_SECRET"),
-            "password": env_vars.get("OKX_API_PASS"),
-            "enableRateLimit": True,
-            "options": {"defaultType": "spot"}
-        }),
-        "huobi": (ccxt.huobi, {
-            "apiKey": env_vars.get("HUOBI_API_KEY"),
-            "secret": env_vars.get("HUOBI_API_SECRET"),
-            "enableRateLimit": True
-        }),
-        "bigone": (ccxt.bigone, {
-            "apiKey": env_vars.get("BIGONE_API_KEY"),
-            "secret": env_vars.get("BIGONE_API_SECRET"),
-            "enableRateLimit": True
-        }),
+        "mexc":  (ccxt.mexc,   {"apiKey": env_vars["MEXC_API_KEY"],   "secret": env_vars["MEXC_API_SECRET"]}),
+        "bitget":(ccxt.bitget, {"apiKey": env_vars["BITGET_API_KEY"], "secret": env_vars["BITGET_API_SECRET"], "password": env_vars["BITGET_API_PASSPHRASE"]}),
+        "kucoin":(ccxt.kucoin, {"apiKey": env_vars["KUCOIN_API_KEY"], "secret": env_vars["KUCOIN_API_SECRET"], "password": env_vars["KUCOIN_API_PASS"]}),
+        "okx":   (ccxt.okx,    {"apiKey": env_vars["OKX_API_KEY"],    "secret": env_vars["OKX_API_SECRET"],    "password": env_vars["OKX_API_PASS"]}),
+        "huobi": (ccxt.huobi,  {"apiKey": env_vars["HUOBI_API_KEY"],  "secret": env_vars["HUOBI_API_SECRET"]}),
+        "bigone":(ccxt.bigone, {"apiKey": env_vars["BIGONE_API_KEY"], "secret": env_vars["BIGONE_API_SECRET"]}),
     }
 
-    for name, (cls, cfg) in candidates.items():
-        # проверяем, есть ли ключи в env_vars
-        if not any(cfg.get(k) for k in ("apiKey", "secret", "password")):
-            log(f"{name.upper()} ⚪ пропущен — нет API-ключей")
-            continue
-
-        ex = await try_init(name, cls, **cfg)
+    for name, (cls, params) in candidates.items():
+        ex = await try_init(name, cls, **params)
         if ex:
             exchanges[name] = ex
 
     if not exchanges:
-        raise RuntimeError("❌ Нет активных бирж. Проверь ключи или блокировки IP.")
+        raise RuntimeError("❌ Нет активных бирж (все недоступны или без ключей).")
 
     log(f"Активные биржи: {', '.join(exchanges.keys())}")
-
 
 # ================== SCANNER ==================
 async def get_top_symbols(exchange, top_n=100):
@@ -537,5 +514,6 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
