@@ -343,6 +343,25 @@ async def send_start_summary(chat_id):
         pass
 
 # ================== COMMANDS ==================
+        
+# ================== STATUS ==================
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает состояние подключения ко всем биржам"""
+    if not exchange_status:
+        await update.message.reply_text("⚠️ Биржи ещё не инициализированы.")
+        return
+
+    lines = ["📊 *Статус подключений:*"]
+    for name, data in exchange_status.items():
+        status = data.get("status", "⚪")
+        error = data.get("error")
+        if error:
+            lines.append(f"{name.upper()}: {status} — {error}")
+        else:
+            lines.append(f"{name.upper()}: {status}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data["chat_id"] = update.effective_chat.id
     context.chat_data["autoscan"] = True
@@ -467,8 +486,12 @@ async def main_async():
 
         # --- Команды ---
         handlers = [
-            ("start", start), ("info", info), ("scan", scan_cmd),
-            ("balance", balance_cmd), ("scanlog", scanlog_cmd), ("stop", stop_cmd)
+            ("start", start),
+            ("info", info),
+            ("scan", scan_cmd),
+            ("balance", balance_cmd),
+            ("scanlog", scanlog_cmd),
+            ("status", status_cmd),
         ]
         for cmd, func in handlers:
             app.add_handler(CommandHandler(cmd, func))
@@ -506,11 +529,13 @@ async def main_async():
         ))
 
         log("💡 Render видит открытый порт. Ожидание запросов Telegram...")
-        # Держим процесс живым навсегда
+
+        # --- Держим процесс живым навсегда ---
         await keep_alive()
 
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
+
     finally:
         await close_all_exchanges()
         log("🧹 Завершение работы.")
@@ -521,6 +546,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
