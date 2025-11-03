@@ -3,7 +3,6 @@
 # © 2025 — Multi-Exchange Arbitrage Bot for Telegram
 # Exchanges: MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE
 # ================================================================
-
 import os
 import asyncio
 import ccxt.async_support as ccxt
@@ -40,7 +39,6 @@ env_vars = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
     "CHAT_ID": os.getenv("CHAT_ID"),
 }
-
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 
 # ================== GLOBALS ==================
@@ -394,19 +392,26 @@ async def main():
 
         log(f"Слушаю порт {port}...")
 
-        # === ЗАПУСК WEBHOOK ЗДЕСЬ (ТОЛЬКО ОДИН РАЗ!) ===
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url
-        )
+        # ← ВОЗВРАЩАЕМ ПЕРЕМЕННЫЕ ДЛЯ ЗАПУСКА ВНЕ main()
+        return app, port, webhook_url
 
     except Exception as e:
         log(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
         raise
     finally:
         await close_all_exchanges()
-if __name__ == "__main__":
-    asyncio.run(main())  # ← ВСЁ! run_webhook уже внутри main()
 
+# ================== ЗАПУСК ==================
+if __name__ == "__main__":
+    # Инициализация
+    app, port, webhook_url = asyncio.run(main())
+
+    # Запуск webhook отдельно — без двойного event loop
+    asyncio.run(
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="/webhook",
+            webhook_url=webhook_url
+        )
+    )
