@@ -481,7 +481,6 @@ async def main_async():
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # --- Уведомление при запуске ---
         CHAT_ID = env_vars.get("CHAT_ID")
         if CHAT_ID:
             try:
@@ -489,6 +488,8 @@ async def main_async():
                 log(f"Отправлено уведомление в Telegram ({CHAT_ID})")
             except Exception as e:
                 log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
+
+
 
         # --- Команды ---
         handlers = [
@@ -553,6 +554,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
