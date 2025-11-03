@@ -353,11 +353,10 @@ async def close_all_exchanges():
 async def main():
     try:
         await init_exchanges()
-
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # === ТВОИ ХЕНДЛЕРЫ (оставь как есть!) ===
+        # === ХЕНДЛЕРЫ ===
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("info", info))
         app.add_handler(CommandHandler("scan", scan_cmd))
@@ -366,7 +365,6 @@ async def main():
         app.add_handler(CommandHandler("status", status_cmd))
         app.add_handler(CommandHandler("ping", ping_cmd))
         app.add_handler(CommandHandler("stop", stop_cmd))
-
         app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
         app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
         app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
@@ -395,25 +393,20 @@ async def main():
                 log(f"Не удалось уведомить: {e}")
 
         log(f"Слушаю порт {port}...")
-        return app, port, webhook_url
+
+        # === ЗАПУСК WEBHOOK ЗДЕСЬ (ТОЛЬКО ОДИН РАЗ!) ===
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="/webhook",
+            webhook_url=webhook_url
+        )
 
     except Exception as e:
         log(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
         raise
     finally:
         await close_all_exchanges()
-
-# ================== ЗАПУСК (ЭТОТ БЛОК — В САМЫЙ КОНЕЦ!) ==================
 if __name__ == "__main__":
-    # Render запускает `python bot.py` → мы возвращаем app и запускаем webhook отдельно
-    app, port, webhook_url = asyncio.run(main())
-    
-    # Запускаем webhook ВНЕ main() — чтобы не было двойного event loop
-    asyncio.run(
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url
-        )
-    )
+    asyncio.run(main())  # ← ВСЁ! run_webhook уже внутри main()
+
