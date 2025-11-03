@@ -2,63 +2,24 @@ services:
   - type: web
     name: arbitrage-scanner
     env: python
-    plan: free
-    autoDeploy: true
-
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
-
+    plan: free
     envVars:
-      # === Telegram ===
-      TELEGRAM_BOT_TOKEN:
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      CHAT_ID:
+      - key: MEXC_API_KEY
         sync: false
-
-      # === MEXC ===
-      MEXC_API_KEY:
+      - key: MEXC_API_SECRET
         sync: false
-      MEXC_API_SECRET:
+      - key: BITGET_API_KEY
         sync: false
-
-      # === BITGET ===
-      BITGET_API_KEY:
+      - key: BITGET_API_SECRET
         sync: false
-      BITGET_API_SECRET:
+      - key: BITGET_API_PASSPHRASE
         sync: false
-      BITGET_API_PASSPHRASE:
+      - key: CHAT_ID
         sync: false
-
-      # === KUCOIN ===
-      KUCOIN_API_KEY:
-        sync: false
-      KUCOIN_API_SECRET:
-        sync: false
-      KUCOIN_API_PASS:
-        sync: false
-
-      # === OKX ===
-      OKX_API_KEY:
-        sync: false
-      OKX_API_SECRET:
-        sync: false
-      OKX_API_PASS:
-        sync: false
-
-      # === HUOBI ===
-      HUOBI_API_KEY:
-        sync: false
-      HUOBI_API_SECRET:
-        sync: false
-
-      # === BIGONE ===
-      BIGONE_API_KEY:
-        sync: false
-      BIGONE_API_SECRET:
-        sync: false
-
-      # === BYBIT ===
-      BYBIT_API_KEY:
-        sync: false
-      BYBIT_API_SECRET:
-        sync: false
+    autoDeploy: true
+    healthCheckPath: /
+    region: frankfurt
