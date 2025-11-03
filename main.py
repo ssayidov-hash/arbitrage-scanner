@@ -70,6 +70,7 @@ exchanges = {}
 pending_trades = {}        # chat_id -> {cheap, sell, symbol, usdt?}
 app = None
 scanlog_enabled = set()    # чаты, где включён лог сканирования
+exchange_status = {}  # name -> {"status": "✅/❌/⚪", "error": "text", "ex": ccxt_instance_or_None}
 
 # ================== TEXT ==================
 INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
@@ -103,39 +104,40 @@ async def send_log(chat_id, msg):
             pass
 
 # ================== INIT ==================
+# ================== INIT ==================
 async def init_exchanges():
-    """Инициализация всех бирж с логами статусов"""
+    """Инициализация всех бирж с логами и статусами"""
+    global exchanges, exchange_status
+    exchanges, exchange_status = {}, {}
+
     async def try_init(name, ex_class, **kwargs):
-        # если ключей нет — просто пропускаем
+        # если ключей нет
         if not any(kwargs.values()):
+            exchange_status[name] = {"status": "⚪", "error": "нет API-ключей", "ex": None}
             log(f"{name.upper()} ⚪ пропущен — нет API-ключей")
             return None
-
         try:
             ex = ex_class(kwargs)
             await ex.load_markets()
+            exchange_status[name] = {"status": "✅", "error": None, "ex": ex}
             log(f"{name.upper()} ✅ инициализирован")
             return ex
         except Exception as e:
+            exchange_status[name] = {"status": "❌", "error": str(e), "ex": None}
             log(f"{name.upper()} ❌ {e}")
             try:
-                # корректно закрываем соединение, если неудача
                 await ex.close()
             except:
                 pass
             return None
 
-    global exchanges
-    exchanges = {}
-
-    # --- список поддерживаемых бирж ---
     candidates = {
-        "mexc":  (ccxt.mexc,   {"apiKey": env_vars["MEXC_API_KEY"],   "secret": env_vars["MEXC_API_SECRET"]}),
-        "bitget":(ccxt.bitget, {"apiKey": env_vars["BITGET_API_KEY"], "secret": env_vars["BITGET_API_SECRET"], "password": env_vars["BITGET_API_PASSPHRASE"]}),
-        "kucoin":(ccxt.kucoin, {"apiKey": env_vars["KUCOIN_API_KEY"], "secret": env_vars["KUCOIN_API_SECRET"], "password": env_vars["KUCOIN_API_PASS"]}),
-        "okx":   (ccxt.okx,    {"apiKey": env_vars["OKX_API_KEY"],    "secret": env_vars["OKX_API_SECRET"],    "password": env_vars["OKX_API_PASS"]}),
-        "huobi": (ccxt.huobi,  {"apiKey": env_vars["HUOBI_API_KEY"],  "secret": env_vars["HUOBI_API_SECRET"]}),
-        "bigone":(ccxt.bigone, {"apiKey": env_vars["BIGONE_API_KEY"], "secret": env_vars["BIGONE_API_SECRET"]}),
+        "mexc":   (ccxt.mexc,   {"apiKey": env_vars["MEXC_API_KEY"],   "secret": env_vars["MEXC_API_SECRET"]}),
+        "bitget": (ccxt.bitget, {"apiKey": env_vars["BITGET_API_KEY"], "secret": env_vars["BITGET_API_SECRET"], "password": env_vars["BITGET_API_PASSPHRASE"]}),
+        "kucoin": (ccxt.kucoin, {"apiKey": env_vars["KUCOIN_API_KEY"], "secret": env_vars["KUCOIN_API_SECRET"], "password": env_vars["KUCOIN_API_PASS"]}),
+        "okx":    (ccxt.okx,    {"apiKey": env_vars["OKX_API_KEY"],    "secret": env_vars["OKX_API_SECRET"],    "password": env_vars["OKX_API_PASS"]}),
+        "huobi":  (ccxt.huobi,  {"apiKey": env_vars["HUOBI_API_KEY"],  "secret": env_vars["HUOBI_API_SECRET"]}),
+        "bigone": (ccxt.bigone, {"apiKey": env_vars["BIGONE_API_KEY"], "secret": env_vars["BIGONE_API_SECRET"]}),
     }
 
     for name, (cls, params) in candidates.items():
@@ -143,10 +145,9 @@ async def init_exchanges():
         if ex:
             exchanges[name] = ex
 
-    if not exchanges:
-        raise RuntimeError("❌ Нет активных бирж (все недоступны или без ключей).")
+    active = [k for k, v in exchange_status.items() if v["status"] == "✅"]
+    log(f"Активные биржи: {', '.join(active) if active else '—'}")
 
-    log(f"Активные биржи: {', '.join(exchanges.keys())}")
 
 # ================== SCANNER ==================
 async def get_top_symbols(exchange, top_n=100):
@@ -365,14 +366,20 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = ["💰 Баланс:"]
-    for n, ex in exchanges.items():
-        try:
-            b = await ex.fetch_balance()
-            lines.append(f"{n.upper()}: {b['USDT']['free']:.2f} / {b['USDT']['total']:.2f}")
-        except Exception as e:
-            lines.append(f"{n.upper()}: {e}")
+    lines = ["💰 Баланс по биржам:"]
+    for name, st in exchange_status.items():
+        ex = st["ex"]
+        if st["status"] == "✅" and ex:
+            try:
+                b = await ex.fetch_balance()
+                lines.append(f"{name.upper()} ✅ {b['USDT']['free']:.2f} / {b['USDT']['total']:.2f}")
+            except Exception as e:
+                lines.append(f"{name.upper()} ⚠️ ошибка: {e}")
+        else:
+            reason = st["error"] or "неактивна"
+            lines.append(f"{name.upper()} {st['status']} {reason}")
     await update.message.reply_text("\n".join(lines))
+
 
 async def scanlog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -514,6 +521,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
