@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: arbitrage scanner
+    name: arbitrage-scanner
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
@@ -63,6 +63,7 @@ services:
           property: OKX_API_SECRET
       OKX_API_PASS:
         fromDataba
+
 
 
 
