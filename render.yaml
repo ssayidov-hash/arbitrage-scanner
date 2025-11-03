@@ -3,7 +3,7 @@ services:
     name: arbitrage-scanner
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python bot.py
     plan: free
     autoDeploy: true
 
@@ -63,3 +63,4 @@ services:
           property: OKX_API_SECRET
       OKX_API_PASS:
         fromDataba
+
