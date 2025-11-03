@@ -6,15 +6,15 @@ services:
     startCommand: python main.py
     plan: free
     autoDeploy: true
+
     envVars:
-      BYBIT_API_KEY:
+      # === TELEGRAM ===
+      TELEGRAM_BOT_TOKEN:
         fromDatabase:
           name: secrets-db
-          property: BYBIT_API_KEY
-      BYBIT_API_SECRET:
-        fromDatabase:
-          name: secrets-db
-          property: BYBIT_API_SECRET
+          property: TELEGRAM_BOT_TOKEN
+
+      # === MEXC ===
       MEXC_API_KEY:
         fromDatabase:
           name: secrets-db
@@ -23,6 +23,8 @@ services:
         fromDatabase:
           name: secrets-db
           property: MEXC_API_SECRET
+
+      # === BITGET ===
       BITGET_API_KEY:
         fromDatabase:
           name: secrets-db
@@ -31,7 +33,33 @@ services:
         fromDatabase:
           name: secrets-db
           property: BITGET_API_SECRET
-      TELEGRAM_BOT_TOKEN:
+      BITGET_API_PASSPHRASE:
         fromDatabase:
           name: secrets-db
-          property: TELEGRAM_BOT_TOKEN
+          property: BITGET_API_PASSPHRASE
+
+      # === KUCOIN ===
+      KUCOIN_API_KEY:
+        fromDatabase:
+          name: secrets-db
+          property: KUCOIN_API_KEY
+      KUCOIN_API_SECRET:
+        fromDatabase:
+          name: secrets-db
+          property: KUCOIN_API_SECRET
+      KUCOIN_API_PASS:
+        fromDatabase:
+          name: secrets-db
+          property: KUCOIN_API_PASS
+
+      # === OKX ===
+      OKX_API_KEY:
+        fromDatabase:
+          name: secrets-db
+          property: OKX_API_KEY
+      OKX_API_SECRET:
+        fromDatabase:
+          name: secrets-db
+          property: OKX_API_SECRET
+      OKX_API_PASS:
+        fromDataba
