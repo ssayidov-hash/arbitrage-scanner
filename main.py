@@ -404,13 +404,18 @@ async def close_all_exchanges():
             log(f"{name.upper()} ошибка закрытия: {e}")
 
 
+async def keep_alive():
+    """Постоянно держит процесс живым (Render должен видеть открытый порт)"""
+    while True:
+        await asyncio.sleep(3600)
+
+
 async def main_async():
-    """Основной цикл бота"""
     try:
-        # Health server для Render
+        # === Health server (Render требует, чтобы хоть один порт слушался) ===
         await start_health_server()
 
-        # Инициализация бирж
+        # === Инициализация бирж ===
         await init_exchanges()
 
         global app
@@ -446,9 +451,8 @@ async def main_async():
 
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
         log(f"Webhook установлен: {webhook_url}")
-        log("💡 Ожидание Telegram-сообщений...")
 
-        # --- Запускаем webhook в фоне ---
+        # --- Запускаем webhook асинхронно ---
         asyncio.create_task(app.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -457,8 +461,9 @@ async def main_async():
             drop_pending_updates=True
         ))
 
-        # --- Держим процесс активным (иначе Render завершит) ---
-        await asyncio.Event().wait()
+        log("💡 Render видит открытый порт. Ожидание запросов Telegram...")
+        # Держим процесс живым навсегда
+        await keep_alive()
 
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
@@ -468,10 +473,7 @@ async def main_async():
 
 
 def main():
-    """Точка входа"""
     try:
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
-
-
