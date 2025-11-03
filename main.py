@@ -62,6 +62,7 @@ env_vars = {
 
     # --- Telegram ---
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
+    "CHAT_ID": os.getenv("986793552"),
 }
 
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
@@ -544,6 +545,7 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
 
 
