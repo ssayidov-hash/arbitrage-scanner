@@ -20,6 +20,7 @@ MIN_VOLUME_1H = 500_000
 SCAN_INTERVAL = 120
 VERSION = "v5.6"
 
+# ================== ENV VARS ==================
 env_vars = {
     "MEXC_API_KEY": os.getenv("MEXC_API_KEY"),
     "MEXC_API_SECRET": os.getenv("MEXC_API_SECRET"),
@@ -375,7 +376,7 @@ async def main():
         scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
         scheduler.start()
 
-        # Webhook URL
+        # === RENDER WEBHOOK ===
         webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
         if not webhook_url:
             raise RuntimeError("RENDER_EXTERNAL_URL не найден. Убедись, что это Web Service.")
