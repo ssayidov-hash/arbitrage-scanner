@@ -24,6 +24,9 @@ VERSION = "v5.6"
 
 # ================== ENV ==================
 env_vars = {
+    "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
+    "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
+
     "MEXC_API_KEY": os.getenv("MEXC_API_KEY"),
     "MEXC_API_SECRET": os.getenv("MEXC_API_SECRET"),
 
@@ -60,7 +63,7 @@ scanlog_enabled = set() # chat ids
 # ================== TEXTS ==================
 INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 
-Сканирует *MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE* по USDT-парам (топ-100).
+Бот сканирует *MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE / BYBIT* по USDT-парам.
 Фильтры: профит ≥ {MIN_SPREAD}% и объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч.
 Автоскан каждые {SCAN_INTERVAL} сек (если включён).
 
@@ -149,6 +152,7 @@ async def init_exchanges():
         "okx":    (ccxt.okx,    {"apiKey": env_vars.get("OKX_API_KEY"),    "secret": env_vars.get("OKX_API_SECRET"),    "password": env_vars.get("OKX_API_PASS")}),
         "huobi":  (ccxt.huobi,  {"apiKey": env_vars.get("HUOBI_API_KEY"),  "secret": env_vars.get("HUOBI_API_SECRET")}),
         "bigone": (ccxt.bigone, {"apiKey": env_vars.get("BIGONE_API_KEY"), "secret": env_vars.get("BIGONE_API_SECRET")}),
+        "bybit":  (ccxt.bybit,  {"apiKey": env_vars.get("BYBIT_API_KEY"),  "secret": env_vars.get("BYBIT_API_SECRET")}),
     }
 
     for name, (cls, params) in candidates.items():
@@ -184,7 +188,7 @@ async def scan_all_pairs(chat_id: int | None = None):
     symbols = set()
     FEES = {
         "mexc": 0.001, "bitget": 0.001, "kucoin": 0.001,
-        "okx": 0.001, "huobi": 0.001, "bigone": 0.001
+        "okx": 0.001, "huobi": 0.001, "bigone": 0.001, "bybit": 0.001
     }
 
     # собрать унион топ-100 по каждой активной бирже
@@ -302,7 +306,7 @@ async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not buy_price or not sell_price:
             return await update.message.reply_text("⚠️ Недостаточно стакана для расчёта.")
 
-        FEES = {"mexc": 0.001, "bitget": 0.001, "kucoin": 0.001, "okx": 0.001, "huobi": 0.001, "bigone": 0.001}
+        FEES = {"mexc": 0.001, "bitget": 0.001, "kucoin": 0.001, "okx": 0.001, "huobi": 0.001, "bigone": 0.001, "bybit": 0.001}
         profit_pct = (sell_price / buy_price - 1) * 100 \
                      - (FEES.get(cheap, 0.001) + FEES.get(sell, 0.001)) * 100
         profit_usd = round(usdt * profit_pct / 100, 2)
@@ -543,3 +547,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
