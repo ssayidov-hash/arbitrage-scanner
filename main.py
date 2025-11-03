@@ -32,6 +32,7 @@ TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 
 # ================== GLOBALS ==================
 exchanges = {}
+pending_trades = {}
 app = None
 scanlog_enabled = set()  # чаты, где включён лог сканирования
 
@@ -158,12 +159,65 @@ def get_buy_keyboard(sig):
         [InlineKeyboardButton(f"BUY_{sig['cheap'].upper()}", callback_data=f"buy:{sig['cheap']}:{sig['expensive']}:{sig['symbol']}")]
     ])
 
+# ================== CALLBACK: BUY ==================
 async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    _, cheap, expensive, symbol = q.data.split(":")
-    context.user_data["buy_step"] = {"cheap": cheap, "expensive": expensive, "symbol": symbol}
-    await q.edit_message_text(f"Введите сумму в USDT для покупки {symbol} на {cheap.upper()}:")
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")
+    if len(data) != 3:
+        return
+
+    _, exch_name, symbol = data
+    ex = exchanges.get(exch_name)
+    if not ex:
+        await query.edit_message_text(f"❌ Биржа {exch_name.upper()} не инициализирована")
+        return
+
+    # Запоминаем, на что нажали
+    chat_id = query.message.chat_id
+    pending_trades[chat_id] = {"exchange": exch_name, "symbol": symbol}
+
+    await query.edit_message_text(
+        f"💰 Введите сумму сделки в USDT для {symbol} на {exch_name.upper()} (например: 25)",
+    )
+# ================== CALLBACK: ВВОД СУММЫ ==================
+async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id not in pending_trades:
+        return  # не ждём сумму
+
+    text = update.message.text.strip()
+    if not text.replace('.', '', 1).isdigit():
+        await update.message.reply_text("❌ Введите число, например: 25")
+        return
+
+    usdt = float(text)
+    trade = pending_trades[chat_id]
+    exch_name = trade["exchange"]
+    symbol = trade["symbol"]
+    ex = exchanges.get(exch_name)
+
+    try:
+        ticker = await ex.fetch_ticker(symbol)
+        price = ticker["ask"]
+        amount = round(usdt / price, 6)
+        spread = trade.get("spread", 0)
+
+        est_profit_usdt = round(usdt * spread / 100, 2)
+        text = (
+            f"Купить {amount} {symbol.split('/')[0]} на {exch_name.upper()} за {usdt} USDT\n"
+            f"💹 Примерный профит: *{spread}% (~{est_profit_usdt} USDT)*"
+        )
+
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{exch_name}:{symbol}:{usdt}"),
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel"),
+            ]
+        ])
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка при расчёте: {e}")
 
 async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data.get("buy_step")
@@ -340,4 +394,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
