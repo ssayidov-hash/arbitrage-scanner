@@ -1,7 +1,7 @@
 # ================================================================
 # ARBITRAGE SCANNER v5.6 — Interactive Edition (Webhook, Render)
 # © 2025 — Multi-Exchange Arbitrage Bot for Telegram
-# Exchanges: MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE
+# Exchanges: MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE / BYBIT
 # ================================================================
 import os
 import asyncio
@@ -49,7 +49,7 @@ env_vars = {
     "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
 
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-    "CHAT_ID": os.getenv("CHAT_ID"),  # не обязательно, для уведомления при старте
+    "CHAT_ID": os.getenv("CHAT_ID"),  # опционально: уведомление при старте
 }
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 
@@ -81,7 +81,7 @@ INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 START_SUMMARY = f"""
 🧭 *Arbitrage Scanner {VERSION}*
 
-Скан топ-100 монет на *MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE*.
+Скан топ-100 монет на *MEXC / BITGET / KUCOIN / OKX / HUOBI / BIGONE / BYBIT*.
 Фильтры: профит ≥ {MIN_SPREAD}%, объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/h.
 Автоскан: каждые {SCAN_INTERVAL} сек.
 
@@ -107,7 +107,7 @@ async def send_log(chat_id: int, msg: str):
 # ================== HEALTH SERVER ==================
 async def start_health_server():
     """Health-check HTTP (Render должен видеть открытый PORT)."""
-    port = int(os.environ.get("PORT", "10000"))  # ВАЖНО: тот же PORT
+    port = int(os.environ.get("PORT", "10000"))  # используем тот же PORT, что и вебхук
     health_app = web.Application()
     health_app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
     runner = web.AppRunner(health_app)
@@ -115,6 +115,7 @@ async def start_health_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     log(f"[Init] Health server listening on port {port}")
+    log("🌐 Health server готов.")
 
 # ================== EXCH INIT/CLOSE ==================
 async def init_exchanges():
@@ -150,7 +151,8 @@ async def init_exchanges():
         "bitget": (ccxt.bitget, {"apiKey": env_vars.get("BITGET_API_KEY"), "secret": env_vars.get("BITGET_API_SECRET"), "password": env_vars.get("BITGET_API_PASSPHRASE")}),
         "kucoin": (ccxt.kucoin, {"apiKey": env_vars.get("KUCOIN_API_KEY"), "secret": env_vars.get("KUCOIN_API_SECRET"), "password": env_vars.get("KUCOIN_API_PASS")}),
         "okx":    (ccxt.okx,    {"apiKey": env_vars.get("OKX_API_KEY"),    "secret": env_vars.get("OKX_API_SECRET"),    "password": env_vars.get("OKX_API_PASS")}),
-        "huobi": (ccxt.huobi, {"apiKey": ..., "secret": ..., "options": {"defaultType": "spot"}}),
+        # HUOBI: форсим spot, чтобы не лез в *linear-swap*
+        "huobi":  (ccxt.huobi,  {"apiKey": env_vars.get("HUOBI_API_KEY"),  "secret": env_vars.get("HUOBI_API_SECRET"), "options": {"defaultType": "spot"}}),
         "bigone": (ccxt.bigone, {"apiKey": env_vars.get("BIGONE_API_KEY"), "secret": env_vars.get("BIGONE_API_SECRET")}),
         "bybit":  (ccxt.bybit,  {"apiKey": env_vars.get("BYBIT_API_KEY"),  "secret": env_vars.get("BYBIT_API_SECRET")}),
     }
@@ -219,7 +221,7 @@ async def scan_all_pairs(chat_id: int | None = None):
 
         min_p, max_p = min(prices.values()), max(prices.values())
         raw_spread_pct = (max_p - min_p) / min_p * 100
-        if raw_spread_pct < MIN_SPREAD * 0.6:  # лёгкий ранний отсев
+        if raw_spread_pct < MIN_SPREAD * 0.6:  # ранний отсев шума
             continue
 
         min_vol = min(vols.values()) if vols else 0
@@ -254,7 +256,6 @@ async def scan_all_pairs(chat_id: int | None = None):
 
 # ================== BUY FLOW ==================
 def get_buy_keyboard(sig: dict) -> InlineKeyboardMarkup:
-    # передаём обе биржи и символ — пересчитаем точно после ввода суммы
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(
             f"BUY_{sig['cheap'].upper()}",
@@ -438,7 +439,6 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def auto_scan():
     if not app:
         return
-    # пройдёмся по всем чатам, у кого включён автоскан
     for data in app.chat_data.values():
         if data.get("autoscan"):
             chat_id = data["chat_id"]
@@ -453,23 +453,57 @@ async def auto_scan():
                         f"Объём 1ч: {sig['volume_1h']}M$")
                 await app.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
-# ================== KEEP ALIVE ==================
-async def keep_alive():
-    while True:
-        await asyncio.sleep(3600)
-
 # ================== ENTRY POINT ==================
-import signal
-
 async def main_async():
     try:
+        # 1) Health HTTP (Render health-check)
         await start_health_server()
+
+        # 2) Биржи
         await init_exchanges()
 
+        # 3) Telegram
         global app
+        if not TELEGRAM_BOT_TOKEN:
+            raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения.")
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-        # === Telegram уведомление ===
+        # 4) Хендлеры
+        handlers = [
+            ("start",   start_cmd),
+            ("info",    info_cmd),
+            ("scan",    scan_cmd),
+            ("balance", balance_cmd),
+            ("scanlog", scanlog_cmd),
+            ("status",  status_cmd),
+            ("ping",    ping_cmd),
+            ("stop",    stop_cmd),
+        ]
+        for cmd, func in handlers:
+            app.add_handler(CommandHandler(cmd, func))
+
+        app.add_handler(CallbackQueryHandler(handle_buy_callback,      pattern=r"^buy:"))
+        app.add_handler(CallbackQueryHandler(handle_confirm_callback,  pattern=r"^confirm:"))
+        app.add_handler(CallbackQueryHandler(handle_cancel_callback,   pattern=r"^cancel$"))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
+
+        # 5) Планировщик
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
+        scheduler.start()
+
+        # 6) Webhook
+        port = int(os.environ.get("PORT", "10000"))
+        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+        if not host:
+            raise RuntimeError("❌ Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service.")
+        webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
+        await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
+
+        log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
+        log(f"Webhook установлен: {webhook_url}")
+
+        # 7) Уведомление (опционально)
         CHAT_ID = env_vars.get("CHAT_ID")
         if CHAT_ID:
             try:
@@ -478,50 +512,15 @@ async def main_async():
             except Exception as e:
                 log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
 
-        # === Хендлеры ===
-        handlers = [
-            ("start", start),
-            ("info", info),
-            ("scan", scan_cmd),
-            ("balance", balance_cmd),
-            ("scanlog", scanlog_cmd),
-            ("status", status_cmd),
-            ("ping", ping_cmd),
-            ("stop", stop_cmd),
-        ]
-        for cmd, func in handlers:
-            app.add_handler(CommandHandler(cmd, func))
-
-        app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
-        app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
-        app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
-
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
-        scheduler.start()
-
-        # === Webhook ===
-        port = int(os.environ.get("PORT", "10000"))
-        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-        webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
-        await app.bot.set_webhook(webhook_url, drop_pending_updates=True)
-
-        log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
-        log(f"Webhook установлен: {webhook_url}")
-
-
+        # 8) Грейсфул shutdown (не везде поддерживаются сигналы — оборачиваем)
         try:
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
-        except NotImplementedError:
-            
-    # Windows / Render fallback (без signal handlers)
-    log("⚠️ Signal handlers не поддерживаются в этой среде.")
+                loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(close_all_exchanges()))
+        except (NotImplementedError, RuntimeError):
+            log("⚠️ Signal handlers не поддерживаются в этой среде.")
 
-
-        # === Запускаем webhook (главный цикл) ===
+        # 9) Главный цикл webhook (блокирующий до остановки)
         await app.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -535,7 +534,5 @@ async def main_async():
         await close_all_exchanges()
         log("🧹 Завершение работы.")
 
-
 if __name__ == "__main__":
     asyncio.run(main_async())
-
