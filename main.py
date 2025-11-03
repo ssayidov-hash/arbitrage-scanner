@@ -157,6 +157,7 @@ async def scan_all_pairs(chat_id=None):
 def get_buy_keyboard(sig):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"BUY_{sig['cheap'].upper()}", callback_data=f"buy:{sig['cheap']}:{sig['expensive']}:{sig['symbol']}")]
+        pending_trades[sig['symbol']] = {"spread": sig['spread']}
     ])
 
 # ================== CALLBACK: BUY ==================
@@ -394,5 +395,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
