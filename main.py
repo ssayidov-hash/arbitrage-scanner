@@ -374,14 +374,16 @@ async def healthcheck(_):
     return web.Response(text="OK")
 
 async def start_health_server():
-    port = int(os.environ.get("PORT", "8443")) + 1
-    _app = web.Application()
-    _app.add_routes([web.get("/", healthcheck)])
-    runner = web.AppRunner(_app)
+    """Мини-сервер для Render (на том же порту, чтобы пройти health-check)"""
+    port = int(os.environ.get("PORT", "10000"))  # без +1 !
+    app = web.Application()
+    app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
+    runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     log(f"[Init] Health server listening on port {port}")
+
     
 # ================== CLOSE EXCHANGES ==================
 async def close_all_exchanges():
@@ -477,3 +479,4 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
