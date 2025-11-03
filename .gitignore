@@ -1,7 +1,45 @@
+# --- Python ---
 __pycache__/
-.env
-*.log
 *.pyc
-.DS_Store
+*.pyo
+*.pyd
+*.log
+*.db
+*.sqlite3
+
+# --- Virtual env ---
+.venv/
+env/
+venv/
+ENV/
+
+# --- Local config / secrets ---
+.env
+.env.*
+*.env
+config.json
+*.key
+*.secret
+*.pem
+*.p12
+
+# --- IDE / Editor ---
 .vscode/
 .idea/
+*.code-workspace
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Render build cache ---
+render-build/
+.cache/
+.tmp/
+
+# --- Jupyter / Notebooks ---
+*.ipynb_checkpoints
+
+# --- Misc ---
+*.bak
+*.old
