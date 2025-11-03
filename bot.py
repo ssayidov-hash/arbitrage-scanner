@@ -77,6 +77,7 @@ async def start_health_server():
     port = int(os.environ.get("PORT", "10000"))
     health_app = web.Application()
     health_app.add_routes([web.get("/", lambda _: web.Response(text="OK"))])
+    health_app.add_routes([web.get("/health", lambda _: web.Response(text="OK"))])
     runner = web.AppRunner(health_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -96,7 +97,11 @@ async def init_exchanges():
             log(f"{name.upper()} ⚪ пропущен — нет API-ключей")
             return None
         try:
-            ex = ex_class(kwargs)
+            ex = ex_class({
+                **kwargs,
+                'enableRateLimit': True,
+                'options': {'defaultType': 'spot'}
+            })
             await ex.load_markets()
             exchange_status[name] = {"status": "✅", "error": None, "ex": ex}
             log(f"{name.upper()} ✅ инициализирован")
@@ -283,8 +288,8 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 b = await ex.fetch_balance()
                 free = b["USDT"]["free"]
                 lines.append(f"{name.upper()} ✅ {free:.2f} USDT")
-            except:
-                lines.append(f"{name.upper()} ⚠️ ошибка запроса баланса")
+            except Exception as e:
+                lines.append(f"{name.upper()} ⚠️ ошибка: {str(e)[:50]}")
         else:
             lines.append(f"{name.upper()} {st['status']} {st.get('error','')}")
     await update.message.reply_text("\n".join(lines))
@@ -349,12 +354,20 @@ async def main_async():
         # Webhook
         port = int(os.environ.get("PORT", "10000"))
         host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+        if not host:
+            log("❌ RENDER_EXTERNAL_HOSTNAME не задан!")
+            return
         webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
 
         # Повторные попытки установки webhook
         for attempt in range(3):
             try:
-                await app.bot.set_webhook(webhook_url, drop_pending_updates=True, timeout=30)
+                await app.bot.set_webhook(
+                    url=webhook_url,
+                    drop_pending_updates=True,
+                    timeout=30
+                )
+                log(f"Webhook установлен: {webhook_url}")
                 break
             except (TimedOut, RetryAfter, NetworkError) as e:
                 log(f"⚠️ Попытка {attempt+1}/3 установки webhook не удалась ({e}). Повтор через 5 сек...")
@@ -364,7 +377,6 @@ async def main_async():
             return
 
         log(f"✅ Arbitrage Scanner {VERSION} запущен. Порт: {port}")
-        log(f"Webhook установлен: {webhook_url}")
 
         # === Инструкция при запуске ===
         log("===========================================================")
@@ -383,7 +395,12 @@ async def main_async():
         log("/ping — проверить связь")
         log("===========================================================")
 
-        await app.run_webhook(listen="0.0.0.0", port=port, url_path=TELEGRAM_BOT_TOKEN, webhook_url=webhook_url)
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TELEGRAM_BOT_TOKEN,
+            webhook_url=webhook_url
+        )
     except Exception as e:
         log(f"❌ Ошибка в main_async: {e}")
     finally:
@@ -392,13 +409,4 @@ async def main_async():
 
 
 if __name__ == "__main__":
-    try:
-        # избегаем DeprecationWarning: "There is no current event loop"
-        try:
-            loop = asyncio.get_event_loop_policy().get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.run_until_complete(main_async())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main_async())
