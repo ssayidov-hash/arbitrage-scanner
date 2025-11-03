@@ -1,4 +1,4 @@
-# main.py — Arbitrage Scanner v5.5 (Webhook, Render)
+# main.py — Arbitrage Scanner v5.5 (Webhook, Render) — FIXED
 import os
 import asyncio
 import ccxt.async_support as ccxt
@@ -32,9 +32,9 @@ TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 
 # ================== GLOBALS ==================
 exchanges = {}
-pending_trades = {}
+pending_trades = {}        # chat_id -> {cheap, sell, symbol, usdt?}
 app = None
-scanlog_enabled = set()  # чаты, где включён лог сканирования
+scanlog_enabled = set()    # чаты, где включён лог сканирования
 
 # ================== TEXT ==================
 INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
@@ -53,9 +53,8 @@ INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 /scan — ручной запуск сканирования  
 /balance — баланс по биржам  
 /scanlog — включить или выключить лог сканирования  
-/info — параметры и помощь  
 /stop — остановить автоскан  
-/ping — проверить соединение
+/info — параметры и помощь
 """
 
 # ================== UTILS ==================
@@ -63,7 +62,6 @@ def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 async def send_log(chat_id, msg):
-    """Отправляет логи в чат, если включён /scanlog"""
     if app and chat_id in scanlog_enabled:
         try:
             await app.bot.send_message(chat_id, f"🩶 {msg}")
@@ -74,7 +72,7 @@ async def send_log(chat_id, msg):
 async def init_exchanges():
     async def try_init(name, ex_class, **kwargs):
         try:
-            ex = ex_class(kwargs)
+            ex = ex_class(kwargs)   # ccxt принимает dict-конфиг
             await ex.load_markets()
             log(f"{name.upper()} ✅ инициализирован")
             return ex
@@ -139,7 +137,7 @@ async def scan_all_pairs(chat_id=None):
             continue
 
         cheap, expensive = min(prices, key=prices.get), max(prices, key=prices.get)
-        profit = (max_p / min_p - 1) * 100 - (FEES[cheap] + FEES[expensive]) * 100
+        profit = (max_p / min_p - 1) * 100 - (FEES.get(cheap, 0.001) + FEES.get(expensive, 0.001)) * 100
         results.append({
             "symbol": symbol, "cheap": cheap, "expensive": expensive,
             "price_cheap": round(prices[cheap], 6), "price_expensive": round(prices[expensive], 6),
@@ -155,96 +153,93 @@ async def scan_all_pairs(chat_id=None):
 
 # ================== BUY LOGIC ==================
 def get_buy_keyboard(sig):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"BUY_{sig['cheap'].upper()}", callback_data=f"buy:{sig['cheap']}:{sig['expensive']}:{sig['symbol']}")]
-        pending_trades[sig['symbol']] = {"spread": sig['spread']}
-    ])
+    # передаём обе биржи и символ — в колбэке будет точный пересчёт профита
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"BUY_{sig['cheap'].upper()}",
+            callback_data=f"buy:{sig['cheap']}:{sig['expensive']}:{sig['symbol']}"
+        )
+    ]])
 
-# ================== CALLBACK: BUY ==================
+# ---- BUY: нажата кнопка ----
 async def handle_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data.split(":")
-    if len(data) != 3:
+    q = update.callback_query
+    await q.answer()
+    data = q.data.split(":")
+    # ожидаем четыре токена: buy:cheap:sell:symbol
+    if len(data) != 4:
         return
+    _, cheap, sell, symbol = data
 
-    _, exch_name, symbol = data
-    ex = exchanges.get(exch_name)
-    if not ex:
-        await query.edit_message_text(f"❌ Биржа {exch_name.upper()} не инициализирована")
-        return
+    if cheap not in exchanges or sell not in exchanges:
+        return await q.edit_message_text("❌ Биржа недоступна.")
 
-    # Запоминаем, на что нажали
-    chat_id = query.message.chat_id
-    pending_trades[chat_id] = {"exchange": exch_name, "symbol": symbol}
+    chat_id = q.message.chat_id
+    pending_trades[chat_id] = {"cheap": cheap, "sell": sell, "symbol": symbol}
 
-    await query.edit_message_text(
-        f"💰 Введите сумму сделки в USDT для {symbol} на {exch_name.upper()} (например: 25)",
+    await q.edit_message_text(
+        f"💰 Введите сумму сделки в USDT для {symbol} на {cheap.upper()} (например: 25)"
     )
-# ================== CALLBACK: ВВОД СУММЫ ==================
+
+# ---- BUY: пользователь ввёл сумму ----
 async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id not in pending_trades:
-        return  # не ждём сумму
+    step = pending_trades.get(chat_id)
+    if not step:
+        return  # сейчас не ждём сумму
 
-    text = update.message.text.strip()
-    if not text.replace('.', '', 1).isdigit():
-        await update.message.reply_text("❌ Введите число, например: 25")
-        return
+    text = (update.message.text or "").strip()
+    # разрешим 12.34
+    try:
+        usdt = float(text.replace(",", "."))
+        if usdt <= 0:
+            raise ValueError
+    except:
+        return await update.message.reply_text("❌ Введите положительное число, например: 25")
 
-    usdt = float(text)
-    trade = pending_trades[chat_id]
-    exch_name = trade["exchange"]
-    symbol = trade["symbol"]
-    ex = exchanges.get(exch_name)
+    cheap, sell, symbol = step["cheap"], step["sell"], step["symbol"]
+    ex_buy = exchanges.get(cheap)
+    ex_sell = exchanges.get(sell)
 
     try:
-        ticker = await ex.fetch_ticker(symbol)
-        price = ticker["ask"]
-        amount = round(usdt / price, 6)
-        spread = trade.get("spread", 0)
+        t_buy = await ex_buy.fetch_ticker(symbol)   # ask
+        t_sell = await ex_sell.fetch_ticker(symbol) # bid
+        buy_price = t_buy["ask"]
+        sell_price = t_sell["bid"]
 
-        est_profit_usdt = round(usdt * spread / 100, 2)
-        text = (
-            f"Купить {amount} {symbol.split('/')[0]} на {exch_name.upper()} за {usdt} USDT\n"
-            f"💹 Примерный профит: *{spread}% (~{est_profit_usdt} USDT)*"
-        )
+        # комиссии по умолчанию
+        FEES = {"mexc": 0.001, "bitget": 0.001, "kucoin": 0.001}
+        profit_pct = (sell_price / buy_price - 1) * 100 - (FEES.get(cheap,0.001)+FEES.get(sell,0.001))*100
+        profit_usd = round(usdt * profit_pct / 100, 2)
 
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{exch_name}:{symbol}:{usdt}"),
-                InlineKeyboardButton("❌ Отмена", callback_data="cancel"),
-            ]
-        ])
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+        amount = round(usdt / buy_price, 6)
+        step["usdt"] = usdt
+        pending_trades[chat_id] = step
+
+        msg = (f"*{symbol}*\n"
+               f"Покупка: {cheap.upper()} по {buy_price}\n"
+               f"Продажа: {sell.upper()} по {sell_price}\n"
+               f"Сумма: {usdt} USDT → ≈ {amount} {symbol.split('/')[0]}\n"
+               f"💹 Примерный профит: *{profit_pct:.2f}% (~{profit_usd} USDT)*\n\n"
+               f"Подтвердить покупку?")
+
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{cheap}:{symbol}:{usdt}"),
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel")
+        ]])
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
+
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при расчёте: {e}")
 
-async def handle_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    step = context.user_data.get("buy_step")
-    if not step:
-        return
-    try:
-        usdt = float(update.message.text)
-        step["usdt"] = usdt
-        context.user_data["buy_step"] = step
-        msg = (f"Покупка *{step['symbol']}*\nБиржа: {step['cheap'].upper()}\n"
-               f"Сумма: {usdt} USDT\nПодтвердить сделку?")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{step['cheap']}:{step['symbol']}:{usdt}"),
-             InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
-        ])
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
-    except:
-        await update.message.reply_text("Неверный формат суммы. Введите число.")
-
+# ---- BUY: подтверждение ----
 async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    _, exch, symbol, usdt = q.data.split(":")
-    usdt = float(usdt)
-    ex = exchanges.get(exch)
     try:
+        _, exch, symbol, usdt = q.data.split(":")
+        usdt = float(usdt)
+        ex = exchanges[exch]
         bal = await ex.fetch_balance()
         free = bal["USDT"]["free"]
         if free < usdt:
@@ -252,18 +247,20 @@ async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
         t = await ex.fetch_ticker(symbol)
         amount = round(usdt / t["ask"], 6)
         order = await ex.create_market_buy_order(symbol, amount)
-        await q.edit_message_text(f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch.upper()} ({usdt} USDT)\nID: {order.get('id','—')}")
+        await q.edit_message_text(
+            f"✅ Куплено {amount} {symbol.split('/')[0]} на {exch.upper()} ({usdt} USDT)\nID: {order.get('id','—')}"
+        )
     except Exception as e:
         await q.edit_message_text(f"❌ Ошибка покупки: {e}")
 
+# ---- BUY: отмена ----
 async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    pending_trades.pop(q.message.chat_id, None)
     await q.edit_message_text("❌ Покупка отменена.")
 
-# ================== COMMANDS ==================
-
-# ================== SUMMARY ==================
+# ================== SUMMARY (короткая сводка при старте) ==================
 START_SUMMARY = f"""
 🧭 *Arbitrage Scanner {VERSION}*
 
@@ -289,12 +286,12 @@ async def send_start_summary(chat_id):
     except:
         pass
 
+# ================== COMMANDS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data["chat_id"] = update.effective_chat.id
     context.chat_data["autoscan"] = True
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
     await send_start_summary(update.effective_chat.id)
-
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
@@ -331,8 +328,14 @@ async def scanlog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scanlog_enabled.add(chat_id)
         await update.message.reply_text("📡 Лог сканирования включён (реальное время).")
 
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.chat_data["autoscan"] = False
+    await update.message.reply_text("Автоскан ❌ выключен для этого чата.")
+
 # ================== AUTOSCAN ==================
 async def auto_scan():
+    if not app:
+        return
     for data in app.chat_data.values():
         if data.get("autoscan"):
             chat_id = data["chat_id"]
@@ -347,13 +350,14 @@ async def auto_scan():
                 await app.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=get_buy_keyboard(sig))
 
 # ================== HEALTH ==================
-async def healthcheck(_): return web.Response(text="OK")
+async def healthcheck(_): 
+    return web.Response(text="OK")
 
 async def start_health_server():
     port = int(os.environ.get("PORT", "8443")) + 1
-    app = web.Application()
-    app.add_routes([web.get("/", healthcheck)])
-    runner = web.AppRunner(app)
+    _app = web.Application()
+    _app.add_routes([web.get("/", healthcheck)])
+    runner = web.AppRunner(_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
@@ -369,24 +373,29 @@ def main():
     global app
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    handlers = [
+    # команды
+    for cmd, func in [
         ("start", start), ("info", info), ("scan", scan_cmd),
-        ("balance", balance_cmd), ("scanlog", scanlog_cmd)
-    ]
-    for cmd, func in handlers:
+        ("balance", balance_cmd), ("scanlog", scanlog_cmd), ("stop", stop_cmd)
+    ]:
         app.add_handler(CommandHandler(cmd, func))
 
+    # кнопки и ввод суммы
     app.add_handler(CallbackQueryHandler(handle_buy_callback, pattern=r"^buy:"))
     app.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount_input))
 
+    # планировщик
     scheduler = AsyncIOScheduler(event_loop=loop)
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
+    # webhook
     port = int(os.environ.get("PORT", "8443"))
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+    if not host:
+        raise RuntimeError("Нет RENDER_EXTERNAL_HOSTNAME — переведи сервис в Web Service")
     webhook_url = f"https://{host}/{TELEGRAM_BOT_TOKEN}"
     loop.run_until_complete(app.bot.set_webhook(webhook_url, drop_pending_updates=True))
 
@@ -395,6 +404,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
