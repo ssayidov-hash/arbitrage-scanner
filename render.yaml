@@ -90,3 +90,17 @@ services:
         fromDatabase:
           name: secrets-db
           key: BIGONE_API_SECRET
+
+      # === BYBIT ===
+      BYBIT_API_KEY:
+        fromDatabase:
+          name: secrets-db
+          key: BYBIT_API_KEY
+      BYBIT_API_SECRET:
+        fromDatabase:
+          name: secrets-db
+          key: BYBIT_API_SECRET
+      BYBIT_API_PASSPHRASE:
+        fromDatabase:
+          name: secrets-db
+          key: BYBIT_API_PASSPHRASE
