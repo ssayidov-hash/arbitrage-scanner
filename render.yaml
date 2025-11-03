@@ -2,16 +2,18 @@ services:
   - type: web
     name: arbitrage-scanner
     env: python
+    region: singapore
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
-    plan: free
     autoDeploy: true
+    healthCheckPath: /webhook
     envVars:
       # === TELEGRAM ===
       TELEGRAM_BOT_TOKEN:
         fromDatabase:
           name: secrets-db
-          key: TELEGRAM_BOT_TOKEN  # ← ИСПРАВЛЕНО: key, не property
+          key: TELEGRAM_BOT_TOKEN
       CHAT_ID:
         fromDatabase:
           name: secrets-db
