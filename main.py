@@ -62,7 +62,7 @@ env_vars = {
 
     # --- Telegram ---
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-    "CHAT_ID": os.getenv("986793552"),
+    "CHAT_ID": os.getenv("CHAT_ID"),
 }
 
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
@@ -481,6 +481,15 @@ async def main_async():
         global app
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+        # --- Уведомление при запуске ---
+        CHAT_ID = env_vars.get("CHAT_ID")
+        if CHAT_ID:
+            try:
+                await app.bot.send_message(int(CHAT_ID), f"✅ Arbitrage Scanner {VERSION} запущен на Render")
+                log(f"Отправлено уведомление в Telegram ({CHAT_ID})")
+            except Exception as e:
+                log(f"⚠️ Не удалось отправить сообщение при старте: {e}")
+
         # --- Команды ---
         handlers = [
             ("start", start),
@@ -491,7 +500,6 @@ async def main_async():
             ("status", status_cmd),
             ("ping", ping_cmd),
         ]
-
         for cmd, func in handlers:
             app.add_handler(CommandHandler(cmd, func))
 
@@ -545,10 +553,6 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
-
-
-
-
 
 
 
