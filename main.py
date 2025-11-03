@@ -36,19 +36,34 @@ MIN_VOLUME_1H = 100_000
 SCAN_INTERVAL = 120
 VERSION = "v5.5"
 
-# ================== ENV ==================
 env_vars = {
+    # --- Основные биржи ---
     "MEXC_API_KEY": os.getenv("MEXC_API_KEY"),
     "MEXC_API_SECRET": os.getenv("MEXC_API_SECRET"),
+
     "BITGET_API_KEY": os.getenv("BITGET_API_KEY"),
     "BITGET_API_SECRET": os.getenv("BITGET_API_SECRET"),
     "BITGET_API_PASSPHRASE": os.getenv("BITGET_API_PASSPHRASE"),
+
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
     "KUCOIN_API_PASS": os.getenv("KUCOIN_API_PASS"),
+
+    # --- Новые биржи ---
+    "OKX_API_KEY": os.getenv("OKX_API_KEY"),
+    "OKX_API_SECRET": os.getenv("OKX_API_SECRET"),
+    "OKX_API_PASS": os.getenv("OKX_API_PASS"),
+
+    "HUOBI_API_KEY": os.getenv("HUOBI_API_KEY"),
+    "HUOBI_API_SECRET": os.getenv("HUOBI_API_SECRET"),
+
+    "BIGONE_API_KEY": os.getenv("BIGONE_API_KEY"),
+    "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
+
+    # --- Telegram ---
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
 }
-TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
+
 
 # ================== GLOBALS ==================
 exchanges = {}
@@ -59,23 +74,22 @@ scanlog_enabled = set()    # чаты, где включён лог сканир
 # ================== TEXT ==================
 INFO_TEXT = f"""*Arbitrage Scanner {VERSION}*
 
-Бот сканирует *MEXC / BITGET / KUCOIN* по USDT-парам.  
-Анализирует *топ-100 монет* по объёму и ищет арбитраж ≥ {MIN_SPREAD}% с объёмом ≥ {MIN_VOLUME_1H/1000:.0f}k$.
+Бот сканирует *MEXC / BITGET / OKX / KRAKEN / HUOBI / BIGONE* по USDT-парам.  
+(Автоматически пропускает неактивные или без API-ключей.)
 
-*Работа:*
-— Автоскан каждые {SCAN_INTERVAL} сек (если включён)  
-— Команды не блокируются  
-— BUY без номинала — бот сам спросит сумму  
-— Реальное время логов по /scanlog  
+Фильтр: профит ≥ {MIN_SPREAD}% и объём ≥ {MIN_VOLUME_1H/1000:.0f}k$ за 1ч.
+Автоскан каждые {SCAN_INTERVAL} сек для чатов, где включено.
 
-*Команды:*  
-/start — запустить и подписаться на автоскан  
-/scan — ручной запуск сканирования  
-/balance — баланс по биржам  
-/scanlog — включить или выключить лог сканирования  
-/stop — остановить автоскан  
-/info — параметры и помощь
+*Команды:*
+/start — инфо и запуск автосканирования
+/scan — ручной скан
+/balance — баланс по биржам
+/scanlog — вкл/выкл логи сканирования
+/info — параметры и справка
+/stop — отключить автоскан
+/ping — проверить связь
 """
+
 
 # ================== UTILS ==================
 def log(msg: str):
@@ -92,7 +106,7 @@ async def send_log(chat_id, msg):
 async def init_exchanges():
     async def try_init(name, ex_class, **kwargs):
         try:
-            ex = ex_class(kwargs)   # ccxt принимает dict-конфиг
+            ex = ex_class(kwargs)
             await ex.load_markets()
             log(f"{name.upper()} ✅ инициализирован")
             return ex
@@ -101,17 +115,61 @@ async def init_exchanges():
             return None
 
     global exchanges
-    exchanges = {
-        "mexc": await try_init("mexc", ccxt.mexc, apiKey=env_vars["MEXC_API_KEY"], secret=env_vars["MEXC_API_SECRET"]),
-        "bitget": await try_init("bitget", ccxt.bitget, apiKey=env_vars["BITGET_API_KEY"],
-                                 secret=env_vars["BITGET_API_SECRET"], password=env_vars["BITGET_API_PASSPHRASE"]),
-        "kucoin": await try_init("kucoin", ccxt.kucoin, apiKey=env_vars["KUCOIN_API_KEY"],
-                                 secret=env_vars["KUCOIN_API_SECRET"], password=env_vars["KUCOIN_API_PASS"]),
+    exchanges = {}
+
+    # --- Основные биржи ---
+    candidates = {
+        "mexc": (ccxt.mexc, {
+            "apiKey": env_vars["MEXC_API_KEY"],
+            "secret": env_vars["MEXC_API_SECRET"],
+            "enableRateLimit": True
+        }),
+        "bitget": (ccxt.bitget, {
+            "apiKey": env_vars["BITGET_API_KEY"],
+            "secret": env_vars["BITGET_API_SECRET"],
+            "password": env_vars["BITGET_API_PASSPHRASE"],
+            "enableRateLimit": True
+        }),
+        "kucoin": (ccxt.kucoin, {
+            "apiKey": env_vars["KUCOIN_API_KEY"],
+            "secret": env_vars["KUCOIN_API_SECRET"],
+            "password": env_vars["KUCOIN_API_PASS"],
+            "enableRateLimit": True
+        }),
+        "okx": (ccxt.okx, {
+            "apiKey": env_vars.get("OKX_API_KEY"),
+            "secret": env_vars.get("OKX_API_SECRET"),
+            "password": env_vars.get("OKX_API_PASS"),
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot"}
+        }),
+        "huobi": (ccxt.huobi, {
+            "apiKey": env_vars.get("HUOBI_API_KEY"),
+            "secret": env_vars.get("HUOBI_API_SECRET"),
+            "enableRateLimit": True
+        }),
+        "bigone": (ccxt.bigone, {
+            "apiKey": env_vars.get("BIGONE_API_KEY"),
+            "secret": env_vars.get("BIGONE_API_SECRET"),
+            "enableRateLimit": True
+        }),
     }
-    exchanges = {k: v for k, v in exchanges.items() if v}
+
+    for name, (cls, cfg) in candidates.items():
+        # проверяем, есть ли ключи в env_vars
+        if not any(cfg.get(k) for k in ("apiKey", "secret", "password")):
+            log(f"{name.upper()} ⚪ пропущен — нет API-ключей")
+            continue
+
+        ex = await try_init(name, cls, **cfg)
+        if ex:
+            exchanges[name] = ex
+
     if not exchanges:
-        raise RuntimeError("❌ Нет активных бирж.")
+        raise RuntimeError("❌ Нет активных бирж. Проверь ключи или блокировки IP.")
+
     log(f"Активные биржи: {', '.join(exchanges.keys())}")
+
 
 # ================== SCANNER ==================
 async def get_top_symbols(exchange, top_n=100):
@@ -479,4 +537,5 @@ def main():
         asyncio.run(main_async())
     except (KeyboardInterrupt, SystemExit):
         log("⛔ Остановлено пользователем.")
+
 
