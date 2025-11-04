@@ -1,16 +1,15 @@
 # ================================================================
-#  ARBITRAGE SCANNER v5.6-STABLE
-#  Multi-Exchange Arbitrage Bot (MEXC + BITGET)
+#  ARBITRAGE SCANNER v5.8-STABLE
+#  Multi-Exchange Arbitrage Bot (MEXC + BITGET + BIGONE)
 #  Render + Telegram Webhook (PTB 21.6)
 #  © 2025
 # ================================================================
 #
-# 🔹 Команды Telegram:
+# 🔹 Telegram-команды:
 #   /start — краткая справка и запуск автосканирования
 #   /scan — разовый скан (топ-10 сигналов)
 #   /status — состояние подключений к биржам
 #   /balance — балансы по биржам
-#   /scanlog — включить / выключить лог сканирования
 #   /stop — остановить автоскан
 #   /info — подробная справка
 #   /ping — проверить связь
@@ -33,7 +32,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 MIN_SPREAD = 1.2
 MIN_VOLUME_1H = 500_000
 SCAN_INTERVAL = 120
-VERSION = "v5.6-stable"
+VERSION = "v5.8-stable"
 
 # ================== ENV VARS ==================
 env_vars = {
@@ -42,8 +41,10 @@ env_vars = {
     "BITGET_API_KEY": os.getenv("BITGET_API_KEY"),
     "BITGET_API_SECRET": os.getenv("BITGET_API_SECRET"),
     "BITGET_API_PASSPHRASE": os.getenv("BITGET_API_PASSPHRASE"),
+    "BIGONE_API_KEY": os.getenv("BIGONE_API_KEY"),
+    "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-    "CHAT_ID": os.getenv("CHAT_ID"),  # чат, куда слать авто-сканы
+    "CHAT_ID": os.getenv("CHAT_ID"),
 }
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 if not TELEGRAM_BOT_TOKEN:
@@ -61,6 +62,15 @@ scheduler: AsyncIOScheduler | None = None
 # ================== LOG ==================
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def color_status(symbol):
+    if symbol == "✅":
+        return "🟢"
+    if symbol == "❌":
+        return "🔴"
+    if symbol == "⚪":
+        return "⚪"
+    return symbol
 
 # ================== EXCHANGES ==================
 async def init_exchanges():
@@ -80,12 +90,12 @@ async def init_exchanges():
             })
             await ex.load_markets()
             exchange_status[name] = {"status": "✅", "error": None, "ex": ex}
-            log(f"{name.upper()} ✅ инициализирован")
+            log(f"{name.upper()} ✅ инициализирован {color_status('✅')}")
             return ex
         except Exception as e:
             err = str(e).split("\n")[0][:120]
             exchange_status[name] = {"status": "❌", "error": err, "ex": None}
-            log(f"{name.upper()} ❌ {err}")
+            log(f"{name.upper()} ❌ {err} {color_status('❌')}")
             return None
 
     pairs = {
@@ -98,15 +108,17 @@ async def init_exchanges():
             "secret": env_vars["BITGET_API_SECRET"],
             "password": env_vars["BITGET_API_PASSPHRASE"]
         }),
+        "bigone": (ccxt.bigone, {
+            "apiKey": env_vars["BIGONE_API_KEY"],
+            "secret": env_vars["BIGONE_API_SECRET"]
+        }),
     }
 
     for name, (cls, params) in pairs.items():
-        ex = await try_init(name, cls, **params)
-        if ex:
-            exchanges[name] = ex
+        await try_init(name, cls, **params)
 
     active = [k for k, v in exchange_status.items() if v["status"] == "✅"]
-    log(f"Активные биржи: {', '.join(active) if active else '—'}")
+    log(f"Активные биржи: {', '.join(active) if active else '—'} 🟩")
     log(f"Инициализация завершена: {len(active)}/{len(exchange_status)} активны.")
 
 async def close_all_exchanges():
@@ -127,7 +139,7 @@ async def get_top_symbols(exchange, top_n=50):
 
 async def scan_all_pairs():
     results = []
-    FEES = {"mexc": 0.001, "bitget": 0.001}
+    FEES = {"mexc": 0.001, "bitget": 0.001, "bigone": 0.001}
     symbols = set()
 
     for name, ex in exchanges.items():
@@ -178,7 +190,6 @@ async def scan_all_pairs():
 
 # ================== TELEGRAM COMMANDS ==================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.chat_data["chat_id"] = update.effective_chat.id
     await update.message.reply_text(
         f"*ARBITRAGE SCANNER {VERSION}*\n\n"
         f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч\n"
@@ -195,18 +206,41 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        f"*🤖 ARBITRAGE SCANNER {VERSION}*\n\n"
-        "Сканирует USDT-пары на биржах *MEXC* и *Bitget*.\n"
-        f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч\n"
-        f"Интервал автосканирования: {SCAN_INTERVAL} сек\n\n"
-        "Команды:\n"
-        "/start — запуск\n"
-        "/scan — разовый скан\n"
-        "/status — статус бирж\n"
+        f"*📘 ARBITRAGE SCANNER {VERSION}*\n\n"
+        "1️⃣ *Описание:*\n"
+        "Бот сканирует пары USDT на биржах *MEXC*, *Bitget* и *BigONE*, "
+        "ищет арбитражные возможности между ними и рассчитывает потенциальную прибыль.\n\n"
+        "2️⃣ *Параметры:*\n"
+        f"• Минимальный профит: ≥ {MIN_SPREAD}%\n"
+        f"• Минимальный объём (1ч): ≥ {MIN_VOLUME_1H/1000:.0f}k USD\n"
+        f"• Интервал автосканирования: {SCAN_INTERVAL} сек\n"
+        "• Поддерживаемые биржи: MEXC / Bitget / BigONE\n\n"
+        "3️⃣ *Логика работы:*\n"
+        "• Получает топ ликвидных USDT-пар\n"
+        "• Сравнивает цены покупки и продажи между биржами\n"
+        "• Проверяет, превышает ли разница заданный порог профита\n"
+        "• Фильтрует пары с недостаточным объёмом\n"
+        "• Формирует и отправляет сигналы в Telegram\n\n"
+        "4️⃣ *Команды и формат ввода:*\n"
+        "/start — запустить и показать параметры\n"
+        "/scan — разовый поиск сигналов\n"
+        "/status — подключенные биржи\n"
         "/balance — балансы\n"
-        "/stop — выключить авто\n"
-        "/info — описание\n"
-        "/ping — проверить связь"
+        "/stop — остановить авто\n"
+        "/info — полная справка\n"
+        "/ping — проверить связь\n\n"
+        "5️⃣ *Пример сигнала:*\n"
+        "`BTC/USDT`\n"
+        "Профит: 1.45%\n"
+        "Купить: MEXC 67200.5\n"
+        "Продать: Bitget 68180.2\n"
+        "Объём 1ч: 12.3M$\n\n"
+        "6️⃣ *Рекомендации:*\n"
+        "• Держите профит ≥1%, объём ≥500k для реалистичных сделок\n"
+        "• При большом числе сигналов ориентируйтесь на пары с max объёмом\n"
+        "• Обновляйте API-ключи каждые 3–6 месяцев\n"
+        "• Храните ключи только в Render Environment\n"
+        "• Для продвинутых стратегий добавьте KuCoin или Binance\n"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -216,7 +250,7 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["📊 *Статус подключений:*"]
     for name, st in exchange_status.items():
-        lines.append(f"{name.upper()} {st['status']} {st.get('error','')}")
+        lines.append(f"{name.upper()} {st['status']} {color_status(st['status'])} {st.get('error','')}")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,7 +285,7 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(txt, parse_mode="Markdown")
 
-# ================== AUTO SCAN LOOP ==================
+# ================== AUTO SCAN ==================
 async def auto_scan():
     chat_id = env_vars.get("CHAT_ID")
     if not chat_id:
@@ -281,7 +315,6 @@ async def main():
         .build()
     )
 
-    # === Команды ===
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(CommandHandler("ping", ping_cmd))
@@ -289,16 +322,14 @@ async def main():
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("scan", scan_cmd))
 
-    # === Планировщик авто-скана ===
     scheduler = AsyncIOScheduler()
     scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # === Webhook ===
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
-        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL (Render HTTPS URL)")
+        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL")
 
     WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
     WEBHOOK_URL = f"{EXTERNAL_URL.rstrip('/')}{WEBHOOK_PATH}"
