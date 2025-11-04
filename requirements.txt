@@ -1,5 +1,5 @@
 ccxt
 pandas
 numpy
-python-telegram-bot==20.8
 nest_asyncio
+python-telegram-bot[webhooks]==21.6
