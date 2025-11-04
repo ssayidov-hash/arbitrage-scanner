@@ -45,8 +45,11 @@ env = {
     #"BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
     #"BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
 
-    "OKX_API_KEY": os.getenv("OKX_API_KEY"),
+    "OKX_API_KEY": 
+os.getenv("OKX_API_KEY"),
     "OKX_API_SECRET": os.getenv("OKX_API_SECRET"),
+    "OKX_API_PASSPHRASE":
+os.getenv("OKX_API_PASSPHRASE"),
 
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
@@ -153,7 +156,8 @@ async def init_exchanges():
             "apiKey": env["BIGONE_API_KEY"], "secret": env["BIGONE_API_SECRET"]
         }),
         "okx": (ccxt.okx, {
-            "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"]
+            "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"],
+"password": env["OKX_API_PASSPHRASE"]
         }),
         "kucoin": (ccxt.kucoin, {
             "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
