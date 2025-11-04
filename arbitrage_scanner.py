@@ -242,6 +242,8 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================== MAIN ==================
 async def main():
     print("🚀 INIT START (Render + Telegram webhook)", flush=True)
+
+    # === Инициализация бирж ===
     await init_exchanges()
 
     global app
@@ -254,7 +256,7 @@ async def main():
 
     # === Команды ===
     app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("✅ Бот активен.")))
-    app.add_handler(CommandHandler("info", info))  # твоя функция info с описанием
+    app.add_handler(CommandHandler("info", info))  # функция info с описанием
     # при необходимости добавь остальные handlers (scan, status, balance, stop и т.д.)
 
     # === Планировщик ===
@@ -262,7 +264,7 @@ async def main():
     scheduler.add_job(lambda: None, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # === Webhook параметры ===
+    # === Параметры webhook ===
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
@@ -274,7 +276,9 @@ async def main():
 
     print(f"🌐 Webhook URL: {WEBHOOK_URL}", flush=True)
     print(f"🔒 Secret set: {'yes' if WEBHOOK_SECRET else 'no'}", flush=True)
+    log(f"🌐 Listening on 0.0.0.0:{PORT} for Telegram webhook...")
 
+    # === Лог запуска ===
     log("===========================================================")
     log(f"✅ Arbitrage Scanner {VERSION} запущен (Render webhook mode)")
     log(f"Порт: {PORT}")
@@ -283,7 +287,7 @@ async def main():
     log("🌐 Webhook сервер запущен и слушает входящие обновления Telegram.")
     log("===========================================================")
 
-    # === Запуск Webhook (с безопасным завершением) ===
+    # === Запуск webhook с безопасным завершением ===
     try:
         await app.run_webhook(
             listen="0.0.0.0",
@@ -297,3 +301,9 @@ async def main():
     finally:
         await close_all_exchanges()
         log("🧹 Завершение работы — соединения закрыты.")
+
+
+if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply()
+    asyncio.run(main())
