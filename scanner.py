@@ -138,14 +138,14 @@ async def init_exchanges():
         "okx": (ccxt.okx, {
             "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"]
         }),
-        "kucoin": (ccxt.kucoin, {
-            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
-        }),
+        #"kucoin": (ccxt.kucoin, {
+        #    "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
+        #}),
         # "bybit": (ccxt.bybit, {"apiKey": env["BYBIT_API_KEY"], "secret": env["BYBIT_API_SECRET"]}),  # блокируется CloudFront
-        "gate": (ccxt.gate, {"apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]}),
-        "htx": (ccxt.huobi, {"apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]}),
-        "kraken": (ccxt.kraken, {"apiKey": env["KRAKEN_API_KEY"], "secret": env["KRAKEN_API_SECRET"]}),
-        "crypto": (ccxt.cryptocom, {"apiKey": env["CRYPTO_API_KEY"], "secret": env["CRYPTO_API_SECRET"]}),
+        #"gate": (ccxt.gate, {"apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]}),
+        #"htx": (ccxt.huobi, {"apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]}),
+        #"kraken": (ccxt.kraken, {"apiKey": env["KRAKEN_API_KEY"], "secret": env["KRAKEN_API_SECRET"]}),
+        #"crypto": (ccxt.cryptocom, {"apiKey": env["CRYPTO_API_KEY"], "secret": env["CRYPTO_API_SECRET"]}),
     }
 
     for name, (cls, params) in candidates.items():
