@@ -1,5 +1,20 @@
 # ================================================================
-# ARBITRAGE SCANNER v5.6-STABLE (Render + Telegram Webhook, fixed)
+#  ARBITRAGE SCANNER v5.6-STABLE
+#  Multi-Exchange Arbitrage Bot (MEXC + BITGET)
+#  Render + Telegram Webhook (PTB 21.6)
+#  © 2025
+# ================================================================
+#
+# 🔹 Команды Telegram:
+#   /start — краткая справка и запуск автосканирования
+#   /scan — разовый скан (топ-10 сигналов)
+#   /status — состояние подключений к биржам
+#   /balance — балансы по биржам
+#   /scanlog — включить / выключить лог сканирования
+#   /stop — остановить автоскан
+#   /info — подробная справка
+#   /ping — проверить связь
+#
 # ================================================================
 
 import os
@@ -8,10 +23,9 @@ import asyncio
 import nest_asyncio
 from datetime import datetime
 import ccxt.async_support as ccxt
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
-    CallbackQueryHandler, MessageHandler, filters
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -29,32 +43,24 @@ env_vars = {
     "BITGET_API_SECRET": os.getenv("BITGET_API_SECRET"),
     "BITGET_API_PASSPHRASE": os.getenv("BITGET_API_PASSPHRASE"),
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-    "CHAT_ID": os.getenv("CHAT_ID"),
+    "CHAT_ID": os.getenv("CHAT_ID"),  # чат, куда слать авто-сканы
 }
 TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
 if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("❌ Нет TELEGRAM_BOT_TOKEN")
 
 # ================== PREPARE LOOP ==================
-nest_asyncio.apply()  # важно для Render / Python 3.13
+nest_asyncio.apply()
 
 # ================== GLOBALS ==================
 exchanges = {}
 exchange_status = {}
-pending_trades = {}
-scanlog_enabled = set()
 app: Application | None = None
+scheduler: AsyncIOScheduler | None = None
 
-# ================== UTILS ==================
+# ================== LOG ==================
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-async def send_log(chat_id: int, msg: str):
-    if app and chat_id in scanlog_enabled:
-        try:
-            await app.bot.send_message(chat_id, f"🩶 {msg}")
-        except:
-            pass
 
 # ================== EXCHANGES ==================
 async def init_exchanges():
@@ -82,7 +88,7 @@ async def init_exchanges():
             log(f"{name.upper()} ❌ {err}")
             return None
 
-    candidates = {
+    pairs = {
         "mexc": (ccxt.mexc, {
             "apiKey": env_vars["MEXC_API_KEY"],
             "secret": env_vars["MEXC_API_SECRET"]
@@ -94,7 +100,7 @@ async def init_exchanges():
         }),
     }
 
-    for name, (cls, params) in candidates.items():
+    for name, (cls, params) in pairs.items():
         ex = await try_init(name, cls, **params)
         if ex:
             exchanges[name] = ex
@@ -111,17 +117,163 @@ async def close_all_exchanges():
         except Exception as e:
             log(f"{name.upper()} ошибка закрытия: {e}")
 
-# ================== PLACEHOLDER SCAN (оставлено без изменений) ==================
-# (весь твой существующий код scan_all_pairs, handle_buy_callback, команды и т.д.)
-# вставляется сюда без изменений — он не влияет на запуск Render/webhook
-# ================================================================================
+# ================== SCANNER ==================
+async def get_top_symbols(exchange, top_n=50):
+    tickers = await exchange.fetch_tickers()
+    pairs = [(s, t.get("quoteVolume", 0)) for s, t in tickers.items()
+             if s.endswith("/USDT") and ":" not in s]
+    pairs.sort(key=lambda x: x[1] or 0, reverse=True)
+    return [s for s, _ in pairs[:top_n]]
+
+async def scan_all_pairs():
+    results = []
+    FEES = {"mexc": 0.001, "bitget": 0.001}
+    symbols = set()
+
+    for name, ex in exchanges.items():
+        try:
+            tops = await get_top_symbols(ex)
+            symbols.update(tops)
+        except Exception as e:
+            log(f"{name} ошибка топ-листа: {e}")
+
+    for symbol in symbols:
+        prices, vols = {}, {}
+        for name, ex in exchanges.items():
+            try:
+                t = await ex.fetch_ticker(symbol)
+                if t.get("bid") and t.get("ask"):
+                    prices[name] = (t["bid"] + t["ask"]) / 2
+                    vols[name] = t.get("quoteVolume", 0) or 0
+            except:
+                continue
+
+        if len(prices) < 2:
+            continue
+
+        min_p, max_p = min(prices.values()), max(prices.values())
+        spread = (max_p - min_p) / min_p * 100
+        if spread < MIN_SPREAD:
+            continue
+        min_vol = min(vols.values())
+        if min_vol < MIN_VOLUME_1H:
+            continue
+
+        cheap, expensive = min(prices, key=prices.get), max(prices, key=prices.get)
+        profit = (max_p / min_p - 1) * 100 - (FEES[cheap] + FEES[expensive]) * 100
+
+        if profit >= MIN_SPREAD:
+            results.append({
+                "symbol": symbol,
+                "cheap": cheap,
+                "expensive": expensive,
+                "price_cheap": round(prices[cheap], 6),
+                "price_expensive": round(prices[expensive], 6),
+                "spread": round(profit, 2),
+                "volume_1h": round(min_vol / 1_000_000, 2)
+            })
+
+    results.sort(key=lambda x: x["spread"], reverse=True)
+    return results[:10]
+
+# ================== TELEGRAM COMMANDS ==================
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.chat_data["chat_id"] = update.effective_chat.id
+    await update.message.reply_text(
+        f"*ARBITRAGE SCANNER {VERSION}*\n\n"
+        f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч\n"
+        f"Автоскан каждые {SCAN_INTERVAL} сек.\n\n"
+        "Доступные команды:\n"
+        "/scan — ручной скан\n"
+        "/status — статус подключений\n"
+        "/balance — балансы\n"
+        "/stop — выключить автоскан\n"
+        "/info — справка\n"
+        "/ping — проверить связь",
+        parse_mode="Markdown"
+    )
+
+async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        f"*🤖 ARBITRAGE SCANNER {VERSION}*\n\n"
+        "Сканирует USDT-пары на биржах *MEXC* и *Bitget*.\n"
+        f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч\n"
+        f"Интервал автосканирования: {SCAN_INTERVAL} сек\n\n"
+        "Команды:\n"
+        "/start — запуск\n"
+        "/scan — разовый скан\n"
+        "/status — статус бирж\n"
+        "/balance — балансы\n"
+        "/stop — выключить авто\n"
+        "/info — описание\n"
+        "/ping — проверить связь"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"✅ Я на связи! Версия: {VERSION}")
+
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["📊 *Статус подключений:*"]
+    for name, st in exchange_status.items():
+        lines.append(f"{name.upper()} {st['status']} {st.get('error','')}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["💰 Балансы по биржам:"]
+    for name, st in exchange_status.items():
+        ex = st["ex"]
+        if st["status"] == "✅" and ex:
+            try:
+                b = await ex.fetch_balance()
+                free = b["USDT"]["free"]
+                lines.append(f"{name.upper()} ✅ {free:.2f} USDT")
+            except Exception as e:
+                lines.append(f"{name.upper()} ⚠️ ошибка: {str(e)[:50]}")
+        else:
+            lines.append(f"{name.upper()} {st['status']} {st.get('error','')}")
+    await update.message.reply_text("\n".join(lines))
+
+async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("🔎 Ищу арбитражные сигналы...")
+    res = await scan_all_pairs()
+    if not res:
+        await update.message.reply_text("⏳ Сигналов нет.")
+    else:
+        for sig in res:
+            txt = (
+                f"*{sig['symbol']}*\n"
+                f"Профит: *{sig['spread']}%*\n"
+                f"Купить: {sig['cheap'].upper()} {sig['price_cheap']}\n"
+                f"Продать: {sig['expensive'].upper()} {sig['price_expensive']}\n"
+                f"Объём 1ч: {sig['volume_1h']}M$"
+            )
+            await update.message.reply_text(txt, parse_mode="Markdown")
+
+# ================== AUTO SCAN LOOP ==================
+async def auto_scan():
+    chat_id = env_vars.get("CHAT_ID")
+    if not chat_id:
+        return
+    results = await scan_all_pairs()
+    if not results:
+        await app.bot.send_message(chat_id, "⏳ Нет подходящих арбитражных пар.")
+    else:
+        msg = ["💹 *Топ-арбитражные сигналы:*"]
+        for sig in results:
+            msg.append(
+                f"{sig['symbol']} — {sig['spread']}% | "
+                f"{sig['cheap'].upper()} → {sig['expensive'].upper()}"
+            )
+        await app.bot.send_message(chat_id, "\n".join(msg), parse_mode="Markdown")
 
 # ================== MAIN ==================
 async def main():
     print("🚀 INIT START (Render + Telegram webhook)", flush=True)
     await init_exchanges()
 
-    global app
+    global app, scheduler
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
@@ -129,12 +281,20 @@ async def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("✅ Бот активен.")))
+    # === Команды ===
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("info", info_cmd))
+    app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("scan", scan_cmd))
 
+    # === Планировщик авто-скана ===
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: None, "interval", seconds=SCAN_INTERVAL)
+    scheduler.add_job(auto_scan, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
+    # === Webhook ===
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
@@ -142,26 +302,18 @@ async def main():
 
     WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
     WEBHOOK_URL = f"{EXTERNAL_URL.rstrip('/')}{WEBHOOK_PATH}"
-    WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "") or None
 
     print(f"🌐 Webhook URL: {WEBHOOK_URL}", flush=True)
-    print(f"🔒 Secret set: {'yes' if WEBHOOK_SECRET else 'no'}", flush=True)
-
-    log("===========================================================")
-    log(f"✅ Arbitrage Scanner {VERSION} запущен на Render (webhook mode)")
-    log(f"Порт: {PORT}")
-    log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч")
-    log(f"Автоскан каждые {SCAN_INTERVAL} сек (если включён)")
-    log("🌐 Webhook сервер запущен и слушает входящие обновления от Telegram.")
-    log("===========================================================")
+    log(f"✅ Arbitrage Scanner {VERSION} запущен (Render webhook mode)")
 
     await app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=WEBHOOK_PATH,
         webhook_url=WEBHOOK_URL,
-        secret_token=WEBHOOK_SECRET,
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
     )
 
+if __name__ == "__main__":
+    asyncio.run(main())
