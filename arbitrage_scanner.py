@@ -59,8 +59,8 @@ env_vars = {
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
 
-    "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
-    "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
+    #"BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
+    #"BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
 
     "GATE_API_KEY": os.getenv("GATE_API_KEY"),
     "GATE_API_SECRET": os.getenv("GATE_API_SECRET"),
@@ -310,4 +310,6 @@ async def main():
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+
