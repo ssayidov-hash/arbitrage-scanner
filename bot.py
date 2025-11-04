@@ -252,41 +252,48 @@ async def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("info", info))
+    # === Команды ===
+    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("✅ Бот активен.")))
+    app.add_handler(CommandHandler("info", info))  # твоя функция info с описанием
+    # при необходимости добавь остальные handlers (scan, status, balance, stop и т.д.)
 
+    # === Планировщик ===
     scheduler = AsyncIOScheduler()
     scheduler.add_job(lambda: None, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
+    # === Webhook параметры ===
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
-        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL")
+        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL (Render HTTPS URL)")
 
     WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
     WEBHOOK_URL = f"{EXTERNAL_URL.rstrip('/')}{WEBHOOK_PATH}"
     WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "") or None
 
-    log(f"🌐 Webhook URL: {WEBHOOK_URL}")
+    print(f"🌐 Webhook URL: {WEBHOOK_URL}", flush=True)
+    print(f"🔒 Secret set: {'yes' if WEBHOOK_SECRET else 'no'}", flush=True)
+
+    log("===========================================================")
     log(f"✅ Arbitrage Scanner {VERSION} запущен (Render webhook mode)")
+    log(f"Порт: {PORT}")
+    log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч")
+    log(f"Автоскан каждые {SCAN_INTERVAL} сек (если включён)")
+    log("🌐 Webhook сервер запущен и слушает входящие обновления Telegram.")
+    log("===========================================================")
 
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=WEBHOOK_PATH,
-        webhook_url=WEBHOOK_URL,
-        secret_token=WEBHOOK_SECRET,
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
-
-if __name__ == "__main__":
+    # === Запуск Webhook (с безопасным завершением) ===
     try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
-    except RuntimeError:
-        import nest_asyncio
-        nest_asyncio.apply()
-        asyncio.run(main())
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=WEBHOOK_PATH,
+            webhook_url=WEBHOOK_URL,
+            secret_token=WEBHOOK_SECRET,
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    finally:
+        await close_all_exchanges()
+        log("🧹 Завершение работы — соединения закрыты.")
