@@ -13,7 +13,6 @@ from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     CallbackQueryHandler, MessageHandler, filters
 )
-from telegram.error import TimedOut, RetryAfter, NetworkError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
@@ -130,20 +129,12 @@ async def main():
         .build()
     )
 
-    # === Команды ===
-    # (оставлены без изменений, добавляются твои start, scan, status и т.д.)
     app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("✅ Бот активен.")))
-    # Добавь остальные handlers отсюда ↓
-    # app.add_handler(CommandHandler("scan", scan_cmd))
-    # app.add_handler(CallbackQueryHandler(...))
-    # и т.д.
 
-    # === Планировщик ===
     scheduler = AsyncIOScheduler()
     scheduler.add_job(lambda: None, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # === Webhook URL ===
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
@@ -161,9 +152,9 @@ async def main():
     log(f"Порт: {PORT}")
     log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч")
     log(f"Автоскан каждые {SCAN_INTERVAL} сек (если включён)")
+    log("🌐 Webhook сервер запущен и слушает входящие обновления от Telegram.")
     log("===========================================================")
 
-    # === Запуск Webhook ===
     await app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
@@ -174,5 +165,3 @@ async def main():
         allowed_updates=Update.ALL_TYPES,
     )
 
-if __name__ == "__main__":
-    asyncio.run(main())
