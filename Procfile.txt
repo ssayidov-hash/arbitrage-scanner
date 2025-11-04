@@ -1,1 +1,1 @@
-worker: pip install . && python arbitrage_scanner.py
+worker: pip install . && python scanner.py
