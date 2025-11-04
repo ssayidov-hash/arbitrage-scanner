@@ -130,7 +130,7 @@ async def close_all_exchanges():
             log(f"{name.upper()} ошибка закрытия: {e}")
 
 # ================== SCANNER ==================
-async def get_top_symbols(exchange, top_n=50):
+async def get_top_symbols(exchange, top_n=100):
     tickers = await exchange.fetch_tickers()
     pairs = [(s, t.get("quoteVolume", 0)) for s, t in tickers.items()
              if s.endswith("/USDT") and ":" not in s]
