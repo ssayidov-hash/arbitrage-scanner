@@ -112,6 +112,10 @@ async def init_exchanges():
             "apiKey": env_vars["BIGONE_API_KEY"],
             "secret": env_vars["BIGONE_API_SECRET"]
         }),
+        "okx": (ccxt.okx, {
+            "apiKey": env_vars["OKX_API_KEY"], 
+            "secret": env_vars["OKX_API_SECRET"]
+        }),
     }
 
     for name, (cls, params) in pairs.items():
