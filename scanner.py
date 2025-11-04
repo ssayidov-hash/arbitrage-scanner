@@ -1,12 +1,12 @@
 # ================================================================
-#  ARBITRAGE SCANNER v6.0-STABLE (Render + Telegram Webhook)
+#  ARBITRAGE SCANNER v6.1-STABLE (Render + Telegram Webhook)
 #  Multi-Exchange Spot Arbitrage (REAL ORDERS + AUTOSCAN)
-#  Exchanges: MEXC, BITGET, BIGONE, OKX, KUCOIN, BINANCE, GATE, HTX, KRAKEN, CRYPTO (Bybit отключён)
+#  Exchanges enabled by default: MEXC, BITGET, BIGONE, OKX, KUCOIN
+#  Others left as examples and can be enabled by uncommenting.
+#  PTB 21.6 | CCXT async_support | Python 3.13 compatible
 # ================================================================
 
 import os
-import sys
-import math
 import asyncio
 import nest_asyncio
 from datetime import datetime
@@ -14,17 +14,20 @@ from typing import Dict, Any, List, Tuple, Set
 
 import ccxt.async_support as ccxt
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
-MIN_SPREAD = 1.2          # мин. профит в %
-MIN_VOLUME_1H = 500_000   # мин. объём/1ч по худшей бирже ($)
-SCAN_INTERVAL = 120       # автоскан каждые N сек
-TOPN_PER_EXCHANGE = 80    # топ ликвидных пар/биржу
-VERSION = "v6.0-stable"
+MIN_SPREAD = 1.2            # мин. чистый профит в %
+MIN_VOLUME_1H = 500_000     # мин. объём/1ч ($) по худшей из двух бирж
+SCAN_INTERVAL = 120         # автоскан каждые N сек
+TOPN_PER_EXCHANGE = 80      # максимальное кол-во ликвидных пар на биржу
+VERSION = "v6.1-stable"
 
-TAKER_FEE_DEFAULT = 0.001 # оценка комиссии по умолчанию (0.1%)
+TAKER_FEE_DEFAULT = 0.001   # 0.10% как грубая оценка
 MAKER_FEE_DEFAULT = 0.0008
 
 # ================== ENV ==================
@@ -48,7 +51,7 @@ env = {
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
 
-    # BYBIT отключён (403 с Render)
+    # BYBIT отключён (403 CloudFront с Render)
     # "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
     # "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
 
@@ -67,20 +70,21 @@ env = {
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
     "CHAT_ID": os.getenv("CHAT_ID"),
 }
-
 BOT_TOKEN = env["TELEGRAM_BOT_TOKEN"]
 if not BOT_TOKEN:
     raise SystemExit("❌ Нет TELEGRAM_BOT_TOKEN")
 
 # ================== PREP ==================
 nest_asyncio.apply()
+START_TIME = datetime.now()
+LAST_SCAN_AT: datetime | None = None  # время последнего успешного скана
 
 # ================== GLOBALS ==================
 app: Application | None = None
 exchanges: Dict[str, ccxt.Exchange] = {}
 exchange_status: Dict[str, Dict[str, Any]] = {}
 scanlog_enabled: Set[int] = set()
-pending_trades: Dict[int, Dict[str, Any]] = {}  # chat_id -> {cheap, expensive, symbol}
+pending_trades: Dict[int, Dict[str, Any]] = {}  # chat_id -> {cheap, expensive, symbol, usdt?}
 
 # ================== UTILS ==================
 def log(msg: str):
@@ -89,14 +93,29 @@ def log(msg: str):
 def fmt_pct(x: float) -> str:
     return f"{x:.2f}%"
 
-def safe_float(x, default=0.0):
+def safe_float(x, default=0.0) -> float:
     try:
         return float(x)
     except Exception:
         return default
 
+def uptime_str() -> str:
+    delta = datetime.now() - START_TIME
+    hours, rem = divmod(int(delta.total_seconds()), 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+def last_scan_str() -> str:
+    if not LAST_SCAN_AT:
+        return "—"
+    return LAST_SCAN_AT.strftime("%Y-%m-%d %H:%M:%S")
+
 # ================== EXCH INIT/CLOSE ==================
 async def init_exchanges():
+    """
+    Инициализация подключенных бирж.
+    Чтобы временно отключить биржу — просто закомментируй её в 'candidates'.
+    """
     global exchanges, exchange_status
     exchanges, exchange_status = {}, {}
 
@@ -117,12 +136,13 @@ async def init_exchanges():
             log(f"{name.upper()} ✅ инициализирован 🟢")
             return ex
         except Exception as e:
-            err = str(e).split("\n")[0][:160]
+            err = str(e).split("\n")[0][:200]
             exchange_status[name] = {"status": "❌", "error": err, "ex": None}
             log(f"{name.upper()} ❌ {err}")
             return None
 
     candidates = {
+        # === ENABLED BY DEFAULT ===
         "mexc": (ccxt.mexc, {
             "apiKey": env["MEXC_API_KEY"], "secret": env["MEXC_API_SECRET"]
         }),
@@ -132,20 +152,32 @@ async def init_exchanges():
         "bigone": (ccxt.bigone, {
             "apiKey": env["BIGONE_API_KEY"], "secret": env["BIGONE_API_SECRET"]
         }),
-        "binance": (ccxt.binance, {
-            "apiKey": env["BINANCE_API_KEY"], "secret": env["BINANCE_API_SECRET"]
-        }),
         "okx": (ccxt.okx, {
             "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"]
         }),
-        #"kucoin": (ccxt.kucoin, {
-        #    "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
-        #}),
-        # "bybit": (ccxt.bybit, {"apiKey": env["BYBIT_API_KEY"], "secret": env["BYBIT_API_SECRET"]}),  # блокируется CloudFront
-        #"gate": (ccxt.gate, {"apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]}),
-        #"htx": (ccxt.huobi, {"apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]}),
-        #"kraken": (ccxt.kraken, {"apiKey": env["KRAKEN_API_KEY"], "secret": env["KRAKEN_API_SECRET"]}),
-        #"crypto": (ccxt.cryptocom, {"apiKey": env["CRYPTO_API_KEY"], "secret": env["CRYPTO_API_SECRET"]}),
+        "kucoin": (ccxt.kucoin, {
+            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
+        }),
+
+        # === OPTIONAL — UNCOMMENT TO ENABLE ===
+        # "binance": (ccxt.binance, {
+        #     "apiKey": env["BINANCE_API_KEY"], "secret": env["BINANCE_API_SECRET"]
+        # }),
+        # "gate": (ccxt.gate, {
+        #     "apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]
+        # }),
+        # "htx": (ccxt.huobi, {
+        #     "apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]
+        # }),
+        # "kraken": (ccxt.kraken, {
+        #     "apiKey": env["KRAKEN_API_KEY"], "secret": env["KRAKEN_API_SECRET"]
+        # }),
+        # "crypto": (ccxt.cryptocom, {
+        #     "apiKey": env["CRYPTO_API_KEY"], "secret": env["CRYPTO_API_SECRET"]
+        # }),
+        # "bybit": (ccxt.bybit, {   # CloudFront 403 с Render — отключено
+        #     "apiKey": env.get("BYBIT_API_KEY"), "secret": env.get("BYBIT_API_SECRET")
+        # }),
     }
 
     for name, (cls, params) in candidates.items():
@@ -172,12 +204,13 @@ async def get_top_symbols(ex: ccxt.Exchange, top_n=TOPN_PER_EXCHANGE) -> List[st
     for s, t in tickers.items():
         if ":" in s or not s.endswith("/USDT"):
             continue
-        qv = safe_float(t.get("quoteVolume") or t.get("info", {}).get("quoteVolume"))
+        qv = safe_float(t.get("quoteVolume") or (t.get("info") or {}).get("quoteVolume"))
         rows.append((s, qv))
     rows.sort(key=lambda x: x[1], reverse=True)
     return [s for s, _ in rows[:top_n]]
 
 async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
+    global LAST_SCAN_AT
     # собрать универcальный список символов
     symbol_set: Set[str] = set()
     for name, ex in exchanges.items():
@@ -189,9 +222,7 @@ async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
                 await app.bot.send_message(chat_id, f"<i>{name} ошибка топ-листа: {e}</i>", parse_mode="HTML")
 
     results: List[Dict[str, Any]] = []
-    FEES = {}  # на биржу — грубая оценка taker
-    for name in exchanges.keys():
-        FEES[name] = TAKER_FEE_DEFAULT
+    FEES = {name: TAKER_FEE_DEFAULT for name in exchanges.keys()}
 
     # пройти все символы, собрать цены и объёмы
     for symbol in symbol_set:
@@ -205,7 +236,7 @@ async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
                 if bid and ask:
                     mid = (bid + ask) / 2.0
                     prices[name] = mid
-                    vols[name] = safe_float(t.get("quoteVolume") or t.get("info", {}).get("quoteVolume"))
+                    vols[name] = safe_float(t.get("quoteVolume") or (t.get("info") or {}).get("quoteVolume"))
             except Exception:
                 continue
 
@@ -218,14 +249,15 @@ async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
         if spread_pct < MIN_SPREAD:
             continue
 
-        min_vol = min(v for v in vols.values() if v is not None)
-        if min_vol < MIN_VOLUME_1H:
-            continue
+        # проверяем минимальный объём 1ч среди доступных бирж по этому символу
+        if vols:
+            min_vol = min(v for v in vols.values() if v is not None)
+            if min_vol < MIN_VOLUME_1H:
+                continue
 
         cheap = min(prices, key=prices.get)
         expensive = max(prices, key=prices.get)
 
-        # грубая чистая маржа после комиссий (две сделки — buy+sell)
         gross = (max_p / min_p - 1.0) * 100.0
         fees = (FEES.get(cheap, TAKER_FEE_DEFAULT) + FEES.get(expensive, TAKER_FEE_DEFAULT)) * 100.0
         net = gross - fees
@@ -240,30 +272,30 @@ async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
             "price_cheap": round(prices[cheap], 6),
             "price_expensive": round(prices[expensive], 6),
             "spread": round(net, 2),
-            "volume_1h": round(min_vol / 1_000_000, 2),
+            "volume_1h": round((min_vol if vols else 0) / 1_000_000, 2),
         })
 
     results.sort(key=lambda x: x["spread"], reverse=True)
+    LAST_SCAN_AT = datetime.now()
     return results[:10]
 
-# ================== BUY FLOW (REAL ORDERS) ==================
+# ================== BUY FLOW (SINGLE BUY BUTTON) ==================
 def build_buy_keyboard(sig: Dict[str, Any]) -> InlineKeyboardMarkup:
+    # одна кнопка BUY — спрашиваем сумму после нажатия
     data = f"{sig['cheap']}|{sig['expensive']}|{sig['symbol']}"
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("BUY 25", callback_data=f"buy:{data}:25"),
-        InlineKeyboardButton("BUY 50", callback_data=f"buy:{data}:50"),
-        InlineKeyboardButton("BUY 100", callback_data=f"buy:{data}:100"),
+        InlineKeyboardButton("BUY", callback_data=f"buy:{data}")
     ]])
 
 async def on_buy_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    _, payload, usdt = q.data.split(":")
+    _, payload = q.data.split(":")
     cheap, expensive, symbol = payload.split("|")
     chat_id = q.message.chat.id
-    pending_trades[chat_id] = {"cheap": cheap, "expensive": expensive, "symbol": symbol, "usdt": float(usdt)}
+    pending_trades[chat_id] = {"cheap": cheap, "expensive": expensive, "symbol": symbol}
     await q.edit_message_text(
-        f"💰 Введите <b>сумму USDT</b> (или пришлите новую), по умолчанию: <b>{usdt}</b>\n"
+        f"💰 Введите <b>сумму USDT</b> для сделки.\n"
         f"Сделка: <code>{symbol}</code> — BUY на <b>{cheap.upper()}</b>, SELL на <b>{expensive.upper()}</b>",
         parse_mode="HTML"
     )
@@ -276,39 +308,40 @@ async def on_amount_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (update.message.text or "").strip().replace(",", ".")
     try:
         amt = float(txt)
+        if amt <= 0:
+            raise ValueError
         step["usdt"] = amt
     except Exception:
-        # оставить прежнюю сумму
-        pass
+        return await update.message.reply_text("❌ Введите положительное число, например: 25")
 
     symbol = step["symbol"]
     cheap = step["cheap"]
     sell = step["expensive"]
     ex_buy = exchanges.get(cheap)
     ex_sell = exchanges.get(sell)
+
     try:
-        tbuy = await ex_buy.fetch_ticker(symbol)
-        tsell = await ex_sell.fetch_ticker(symbol)
-        ask = safe_float(tbuy.get("ask"))
-        bid = safe_float(tsell.get("bid"))
+        t_buy = await ex_buy.fetch_ticker(symbol)
+        t_sell = await ex_sell.fetch_ticker(symbol)
+        ask = safe_float(t_buy.get("ask"))
+        bid = safe_float(t_sell.get("bid"))
     except Exception as e:
         return await update.message.reply_text(f"❌ Не смог получить цены: {e}")
 
     profit_pct = (bid / ask - 1.0) * 100.0 - (TAKER_FEE_DEFAULT + TAKER_FEE_DEFAULT) * 100.0
     profit_usd = step["usdt"] * profit_pct / 100.0
-    base = symbol.split("/")[0]
-
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{cheap}|{sell}|{symbol}|{step['usdt']}"),
         InlineKeyboardButton("❌ Отмена", callback_data="cancel")
     ]])
+
     text = (
         f"<b>{symbol}</b>\n"
         f"BUY {cheap.upper()} @ <code>{ask}</code>\n"
         f"SELL {sell.upper()} @ <code>{bid}</code>\n"
         f"Сумма: <b>{step['usdt']:.2f} USDT</b>\n"
         f"Оценка профита: <b>{fmt_pct(profit_pct)}</b> (~{profit_usd:.2f} USDT)\n"
-        f"⚠️ Балансы должны быть: USDT на {cheap.upper()} и {base} на {sell.upper()}.\n"
+        f"⚠️ Балансы должны быть: USDT на {cheap.upper()} и базовая монета на {sell.upper()}.\n"
         f"Продолжить?"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
@@ -317,14 +350,14 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     _, payload = q.data.split(":")
-    cheap, sell, symbol, usdt = payload.split("|")
-    usdt = float(usdt)
+    cheap, sell, symbol, usdt_s = payload.split("|")
+    usdt = float(usdt_s)
     base = symbol.split("/")[0]
 
     ex_buy = exchanges.get(cheap)
     ex_sell = exchanges.get(sell)
 
-    # 1) BUY на дешёвой бирже за USDT (market)
+    # 1) BUY на дешёвой бирже (market)
     try:
         bal_buy = await ex_buy.fetch_balance()
         usdt_free = safe_float((bal_buy.get("USDT") or {}).get("free"))
@@ -336,20 +369,18 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise RuntimeError("bad ask")
         spend = min(usdt, usdt_free)
         base_amount_est = (spend * (1 - TAKER_FEE_DEFAULT)) / ask
-        # округление до допустимой точности биржи
         amount = safe_float(ex_buy.amount_to_precision(symbol, base_amount_est), base_amount_est)
         order_buy = await ex_buy.create_order(symbol, "market", "buy", amount)
     except Exception as e:
         await q.edit_message_text(f"❌ BUY ошибка на {cheap.upper()}: {e}")
         return
 
-    # 2) SELL на дорогой бирже базовой монеты (market)
+    # 2) SELL на дорогой бирже (market)
     try:
         bal_sell = await ex_sell.fetch_balance()
         base_free = safe_float((bal_sell.get(base) or {}).get("free"))
         if base_free <= 0:
             raise RuntimeError(f"{sell.upper()}: нет свободного {base}")
-        # продаём не больше купленного и не больше свободного
         sell_amount = min(base_free, amount)
         sell_amount = safe_float(ex_sell.amount_to_precision(symbol, sell_amount), sell_amount)
         order_sell = await ex_sell.create_order(symbol, "market", "sell", sell_amount)
@@ -358,6 +389,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚠️ BUY выполнен, но SELL не удалось на {sell.upper()}: {e}\n"
             f"Проверь баланс и ордера вручную."
         )
+        pending_trades.pop(q.message.chat.id, None)
         return
 
     await q.edit_message_text(
@@ -377,8 +409,19 @@ async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== COMMANDS ==================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # включаем автоскан для этого чата
+    context.chat_data["chat_id"] = update.effective_chat.id
+    context.chat_data["autoscan"] = True
+
+    active = [k.upper() for k, v in exchange_status.items() if v["status"] == "✅"]
+    total = len(exchange_status)
+    active_str = ", ".join(active) if active else "—"
     text = (
-        f"<b>ARBITRAGE SCANNER {VERSION}</b>\n\n"
+        f"🤖 <b>ARBITRAGE SCANNER {VERSION}</b>\n\n"
+        f"Аптайм: <code>{uptime_str()}</code> (с {START_TIME.strftime('%Y-%m-%d %H:%M:%S')})\n"
+        f"🕓 Последнее обновление: <code>{last_scan_str()}</code>\n"
+        f"Активные биржи: 🟢 <b>{len(active)}</b> / {total}\n"
+        f"{active_str}\n\n"
         f"Фильтры:\n"
         f"• Мин. профит: <code>{MIN_SPREAD:.1f}%</code>\n"
         f"• Мин. объём (1ч): <code>{MIN_VOLUME_1H/1000:.0f}k$</code>\n"
@@ -387,9 +430,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scan — разовый скан (топ-10)\n"
         "/balance — баланс по биржам\n"
         "/status — статус подключений\n"
-        "/scanlog — включить/выключить live-лог скана\n"
+        "/scanlog — включить/выключить live-лог\n"
         "/stop — отключить автоскан\n"
-        "/info — подробная справка\n"
+        "/info — справка\n"
         "/ping — пинг"
     )
     await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
@@ -405,14 +448,14 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Автоскан: <code>{SCAN_INTERVAL} сек</code>\n\n"
         "3) <b>Логика</b>\n"
         "— собираем топ-ликвидные пары; считаем mid-price; фильтруем по объёму; считаем спред и чистую маржу после комиссий;\n"
-        "— выдаём топ сигналов; по клику — BUY/SELL на разных биржах (нужны балансы USDT и BASE). \n\n"
+        "— выдаём топ сигналов; по клику — BUY/SELL на разных биржах (нужны балансы USDT и базовой монеты). \n\n"
         "4) <b>Команды</b>\n"
         "/start, /scan, /balance, /status, /scanlog, /stop, /info, /ping\n\n"
         "5) <b>Пример</b>\n"
         "<code>BTC/USDT</code>: купить на MEXC 67000.2 → продать на Bitget 67750.3 → <b>+1.12%</b>\n\n"
         "6) <b>Рекомендации</b>\n"
-        "— Держи USDT на дешёвой бирже и BASE-коин на дорогой; \n"
-        "— Не опускай SCAN_INTERVAL ниже 120 сек; \n"
+        "— Держи USDT на дешёвой бирже и базовую монету на дорогой;\n"
+        "— Не опускай SCAN_INTERVAL ниже 120 сек;\n"
         "— TOPN_PER_EXCHANGE ≈ 50–100 для стабильности на Render."
     )
     await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
@@ -421,11 +464,23 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Я здесь.", parse_mode="HTML")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = ["<b>Статус подключений:</b>"]
+    active = [k.upper() for k, v in exchange_status.items() if v["status"] == "✅"]
+    total = len(exchange_status)
+    active_str = ", ".join(active) if active else "—"
+
+    lines = [
+        "📊 <b>Статус подключений</b>\n",
+        f"Аптайм: <code>{uptime_str()}</code>",
+        f"🕓 Последнее обновление: <code>{last_scan_str()}</code>",
+        f"Активные биржи: 🟢 <b>{len(active)}</b> / {total}",
+        f"{active_str}\n",
+        "Подробности:"
+    ]
     for name, st in exchange_status.items():
         emoji = "🟢" if st["status"] == "✅" else "🔴" if st["status"] == "❌" else "⚪"
-        err = st["error"] or ""
-        lines.append(f"{emoji} {name.upper()} — {st['status']} {'| ' + err if err else ''}")
+        msg = f"{emoji} {name.upper()} — {'OK' if st['status'] == '✅' else st['error'] or st['status']}"
+        lines.append(msg)
+
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -471,7 +526,7 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(txt, parse_mode="HTML", reply_markup=build_buy_keyboard(sig))
 
-# ================== AUTOSCAN (broadcast to enabled chats) ==================
+# ================== AUTOSCAN ==================
 async def autoscan_tick():
     if not app:
         return
@@ -499,7 +554,7 @@ async def autoscan_tick():
 
 # ================== MAIN ==================
 async def main():
-    print("🚀 INIT START (Render + Telegram webhook)", flush=True)
+    log("🚀 INIT START (Render + Telegram webhook)")
     await init_exchanges()
 
     global app
@@ -510,7 +565,7 @@ async def main():
         .build()
     )
 
-    # Commands/handlers
+    # Handlers
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(CommandHandler("scan", scan_cmd))
@@ -524,7 +579,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(on_cancel, pattern=r"^cancel$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_amount_text))
 
-    # enable autoscan per-chat when /start
+    # Второй обработчик /start (группа 1) — включает автоскан для чата
     async def on_start_autoscan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data["chat_id"] = update.effective_chat.id
         context.chat_data["autoscan"] = True
