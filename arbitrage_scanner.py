@@ -201,7 +201,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — состояние подключений\n"
         "/info — подробная справка\n"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["📊 *Статус подключений:*"]
