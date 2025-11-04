@@ -3,3 +3,4 @@ pandas
 numpy
 nest_asyncio
 python-telegram-bot[webhooks]==21.6
+apscheduler
