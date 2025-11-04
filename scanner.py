@@ -236,7 +236,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Ставь SCAN_INTERVAL ≥ 120 сек для стабильности\n"
         "• Добавляй только активные API ключи\n"
         "• Render может завершить процесс при избыточной нагрузке — оптимизируй top_n до 50\n"
-    )
+    
 await update.message.reply_text(
     text,
     parse_mode="HTML",
