@@ -148,10 +148,10 @@ async def init_exchanges():
             "apiKey": env_vars["KUCOIN_API_KEY"],
             "secret": env_vars["KUCOIN_API_SECRET"]
         }),
-        "bybit": (ccxt.bybit, {
-            "apiKey": env_vars["BYBIT_API_KEY"],
-            "secret": env_vars["BYBIT_API_SECRET"]
-        }),
+        #"bybit": (ccxt.bybit, {
+        #    "apiKey": env_vars["BYBIT_API_KEY"],
+        #   "secret": env_vars["BYBIT_API_SECRET"]
+        #}),
         "gate": (ccxt.gate, {
             "apiKey": env_vars["GATE_API_KEY"],
             "secret": env_vars["GATE_API_SECRET"]
@@ -237,7 +237,11 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Добавляй только активные API ключи\n"
         "• Render может завершить процесс при избыточной нагрузке — оптимизируй top_n до 50\n"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+await update.message.reply_text(
+    text,
+    parse_mode="HTML",
+    disable_web_page_preview=True
+)
 
 # ================== MAIN ==================
 async def main():
