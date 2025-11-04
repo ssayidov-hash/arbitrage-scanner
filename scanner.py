@@ -1,44 +1,34 @@
 # ================================================================
-#  ARBITRAGE SCANNER v5.9-STABLE
-#  Multi-Exchange Arbitrage Bot (MEXC + BITGET + BIGONE + OKX + BINANCE + KUCOIN + BYBIT + GATE + HTX + KRAKEN + CRYPTO)
-#  Render + Telegram Webhook (PTB 21.6)
-#  © 2025
-# ================================================================
-#
-# 🔹 Описание:
-#   Универсальный бот для поиска арбитражных возможностей между крупными биржами.
-#   Работает через Telegram Webhook и полностью совместим с Render.
-#   Отображает топ арбитражных пар с учётом фильтров по объёму и профиту.
-#
-# 🔹 Telegram-команды:
-#   /start    — приветствие и параметры
-#   /scan     — ручной скан (топ-10 сигналов)
-#   /status   — состояние бирж
-#   /scanlog  — включить/выключить debug
-#   /info     — подробная справка
+#  ARBITRAGE SCANNER v6.0-STABLE (Render + Telegram Webhook)
+#  Multi-Exchange Spot Arbitrage (REAL ORDERS + AUTOSCAN)
+#  Exchanges: MEXC, BITGET, BIGONE, OKX, KUCOIN, BINANCE, GATE, HTX, KRAKEN, CRYPTO (Bybit отключён)
 # ================================================================
 
 import os
 import sys
+import math
 import asyncio
 import nest_asyncio
 from datetime import datetime
+from typing import Dict, Any, List, Tuple, Set
+
 import ccxt.async_support as ccxt
-from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, ContextTypes
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
-MIN_SPREAD = 1.2
-MIN_VOLUME_1H = 500_000
-SCAN_INTERVAL = 120
-VERSION = "v5.9-stable"
+MIN_SPREAD = 1.2          # мин. профит в %
+MIN_VOLUME_1H = 500_000   # мин. объём/1ч по худшей бирже ($)
+SCAN_INTERVAL = 120       # автоскан каждые N сек
+TOPN_PER_EXCHANGE = 80    # топ ликвидных пар/биржу
+VERSION = "v6.0-stable"
 
-# ================== ENV VARS ==================
-env_vars = {
-    # === Основные ===
+TAKER_FEE_DEFAULT = 0.001 # оценка комиссии по умолчанию (0.1%)
+MAKER_FEE_DEFAULT = 0.0008
+
+# ================== ENV ==================
+env = {
     "MEXC_API_KEY": os.getenv("MEXC_API_KEY"),
     "MEXC_API_SECRET": os.getenv("MEXC_API_SECRET"),
 
@@ -49,7 +39,6 @@ env_vars = {
     "BIGONE_API_KEY": os.getenv("BIGONE_API_KEY"),
     "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
 
-    # === Дополнительные ===
     "BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
     "BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
 
@@ -59,8 +48,9 @@ env_vars = {
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
 
-    #"BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
-    #"BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
+    # BYBIT отключён (403 с Render)
+    # "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
+    # "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
 
     "GATE_API_KEY": os.getenv("GATE_API_KEY"),
     "GATE_API_SECRET": os.getenv("GATE_API_SECRET"),
@@ -74,29 +64,38 @@ env_vars = {
     "CRYPTO_API_KEY": os.getenv("CRYPTO_API_KEY"),
     "CRYPTO_API_SECRET": os.getenv("CRYPTO_API_SECRET"),
 
-    # === Telegram ===
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
     "CHAT_ID": os.getenv("CHAT_ID"),
 }
 
-TELEGRAM_BOT_TOKEN = env_vars["TELEGRAM_BOT_TOKEN"]
-if not TELEGRAM_BOT_TOKEN:
+BOT_TOKEN = env["TELEGRAM_BOT_TOKEN"]
+if not BOT_TOKEN:
     raise SystemExit("❌ Нет TELEGRAM_BOT_TOKEN")
 
-# ================== PREPARE LOOP ==================
+# ================== PREP ==================
 nest_asyncio.apply()
 
 # ================== GLOBALS ==================
-exchanges = {}
-exchange_status = {}
-scanlog_enabled = set()
 app: Application | None = None
+exchanges: Dict[str, ccxt.Exchange] = {}
+exchange_status: Dict[str, Dict[str, Any]] = {}
+scanlog_enabled: Set[int] = set()
+pending_trades: Dict[int, Dict[str, Any]] = {}  # chat_id -> {cheap, expensive, symbol}
 
 # ================== UTILS ==================
 def log(msg: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
-# ================== EXCHANGES ==================
+def fmt_pct(x: float) -> str:
+    return f"{x:.2f}%"
+
+def safe_float(x, default=0.0):
+    try:
+        return float(x)
+    except Exception:
+        return default
+
+# ================== EXCH INIT/CLOSE ==================
 async def init_exchanges():
     global exchanges, exchange_status
     exchanges, exchange_status = {}, {}
@@ -110,64 +109,43 @@ async def init_exchanges():
             ex = ex_class({
                 **kwargs,
                 "enableRateLimit": True,
-                "options": {"defaultType": "spot"}
+                "options": {"defaultType": "spot"},
+                "timeout": 30000,
             })
             await ex.load_markets()
             exchange_status[name] = {"status": "✅", "error": None, "ex": ex}
             log(f"{name.upper()} ✅ инициализирован 🟢")
             return ex
         except Exception as e:
-            err = str(e).split("\n")[0][:120]
+            err = str(e).split("\n")[0][:160]
             exchange_status[name] = {"status": "❌", "error": err, "ex": None}
             log(f"{name.upper()} ❌ {err}")
             return None
 
     candidates = {
         "mexc": (ccxt.mexc, {
-            "apiKey": env_vars["MEXC_API_KEY"],
-            "secret": env_vars["MEXC_API_SECRET"]
+            "apiKey": env["MEXC_API_KEY"], "secret": env["MEXC_API_SECRET"]
         }),
         "bitget": (ccxt.bitget, {
-            "apiKey": env_vars["BITGET_API_KEY"],
-            "secret": env_vars["BITGET_API_SECRET"],
-            "password": env_vars["BITGET_API_PASSPHRASE"]
+            "apiKey": env["BITGET_API_KEY"], "secret": env["BITGET_API_SECRET"], "password": env["BITGET_API_PASSPHRASE"]
         }),
         "bigone": (ccxt.bigone, {
-            "apiKey": env_vars["BIGONE_API_KEY"],
-            "secret": env_vars["BIGONE_API_SECRET"]
+            "apiKey": env["BIGONE_API_KEY"], "secret": env["BIGONE_API_SECRET"]
         }),
         "binance": (ccxt.binance, {
-            "apiKey": env_vars["BINANCE_API_KEY"],
-            "secret": env_vars["BINANCE_API_SECRET"]
+            "apiKey": env["BINANCE_API_KEY"], "secret": env["BINANCE_API_SECRET"]
         }),
         "okx": (ccxt.okx, {
-            "apiKey": env_vars["OKX_API_KEY"],
-            "secret": env_vars["OKX_API_SECRET"]
+            "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"]
         }),
         "kucoin": (ccxt.kucoin, {
-            "apiKey": env_vars["KUCOIN_API_KEY"],
-            "secret": env_vars["KUCOIN_API_SECRET"]
+            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
         }),
-        #"bybit": (ccxt.bybit, {
-        #    "apiKey": env_vars["BYBIT_API_KEY"],
-        #   "secret": env_vars["BYBIT_API_SECRET"]
-        #}),
-        "gate": (ccxt.gate, {
-            "apiKey": env_vars["GATE_API_KEY"],
-            "secret": env_vars["GATE_API_SECRET"]
-        }),
-        "htx": (ccxt.huobi, {
-            "apiKey": env_vars["HTX_API_KEY"],
-            "secret": env_vars["HTX_API_SECRET"]
-        }),
-        "kraken": (ccxt.kraken, {
-            "apiKey": env_vars["KRAKEN_API_KEY"],
-            "secret": env_vars["KRAKEN_API_SECRET"]
-        }),
-        "crypto": (ccxt.cryptocom, {
-            "apiKey": env_vars["CRYPTO_API_KEY"],
-            "secret": env_vars["CRYPTO_API_SECRET"]
-        }),
+        # "bybit": (ccxt.bybit, {"apiKey": env["BYBIT_API_KEY"], "secret": env["BYBIT_API_SECRET"]}),  # блокируется CloudFront
+        "gate": (ccxt.gate, {"apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]}),
+        "htx": (ccxt.huobi, {"apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]}),
+        "kraken": (ccxt.kraken, {"apiKey": env["KRAKEN_API_KEY"], "secret": env["KRAKEN_API_SECRET"]}),
+        "crypto": (ccxt.cryptocom, {"apiKey": env["CRYPTO_API_KEY"], "secret": env["CRYPTO_API_SECRET"]}),
     }
 
     for name, (cls, params) in candidates.items():
@@ -176,124 +154,406 @@ async def init_exchanges():
             exchanges[name] = ex
 
     active = [k for k, v in exchange_status.items() if v["status"] == "✅"]
-    log(f"Активные биржи: {', '.join(active)} 🟩")
+    log(f"Активные биржи: {', '.join(active) if active else '—'} 🟩")
     log(f"Инициализация завершена: {len(active)}/{len(exchange_status)} активны.")
 
 async def close_all_exchanges():
-    for name, ex in exchanges.items():
+    for name, ex in list(exchanges.items()):
         try:
             await ex.close()
             log(f"{name.upper()} закрыт ✅")
         except Exception as e:
             log(f"{name.upper()} ошибка закрытия: {e}")
 
-# ================== TELEGRAM COMMANDS ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================== MARKET DATA / SCAN ==================
+async def get_top_symbols(ex: ccxt.Exchange, top_n=TOPN_PER_EXCHANGE) -> List[str]:
+    tickers = await ex.fetch_tickers()
+    rows = []
+    for s, t in tickers.items():
+        if ":" in s or not s.endswith("/USDT"):
+            continue
+        qv = safe_float(t.get("quoteVolume") or t.get("info", {}).get("quoteVolume"))
+        rows.append((s, qv))
+    rows.sort(key=lambda x: x[1], reverse=True)
+    return [s for s, _ in rows[:top_n]]
+
+async def scan_all_pairs(chat_id: int | None = None) -> List[Dict[str, Any]]:
+    # собрать универcальный список символов
+    symbol_set: Set[str] = set()
+    for name, ex in exchanges.items():
+        try:
+            tops = await get_top_symbols(ex)
+            symbol_set.update(tops)
+        except Exception as e:
+            if chat_id in scanlog_enabled and app:
+                await app.bot.send_message(chat_id, f"<i>{name} ошибка топ-листа: {e}</i>", parse_mode="HTML")
+
+    results: List[Dict[str, Any]] = []
+    FEES = {}  # на биржу — грубая оценка taker
+    for name in exchanges.keys():
+        FEES[name] = TAKER_FEE_DEFAULT
+
+    # пройти все символы, собрать цены и объёмы
+    for symbol in symbol_set:
+        prices: Dict[str, float] = {}
+        vols: Dict[str, float] = {}
+        for name, ex in exchanges.items():
+            try:
+                t = await ex.fetch_ticker(symbol)
+                bid = safe_float(t.get("bid"))
+                ask = safe_float(t.get("ask"))
+                if bid and ask:
+                    mid = (bid + ask) / 2.0
+                    prices[name] = mid
+                    vols[name] = safe_float(t.get("quoteVolume") or t.get("info", {}).get("quoteVolume"))
+            except Exception:
+                continue
+
+        if len(prices) < 2:
+            continue
+
+        min_p = min(prices.values())
+        max_p = max(prices.values())
+        spread_pct = (max_p - min_p) / min_p * 100.0
+        if spread_pct < MIN_SPREAD:
+            continue
+
+        min_vol = min(v for v in vols.values() if v is not None)
+        if min_vol < MIN_VOLUME_1H:
+            continue
+
+        cheap = min(prices, key=prices.get)
+        expensive = max(prices, key=prices.get)
+
+        # грубая чистая маржа после комиссий (две сделки — buy+sell)
+        gross = (max_p / min_p - 1.0) * 100.0
+        fees = (FEES.get(cheap, TAKER_FEE_DEFAULT) + FEES.get(expensive, TAKER_FEE_DEFAULT)) * 100.0
+        net = gross - fees
+
+        if net < MIN_SPREAD:
+            continue
+
+        results.append({
+            "symbol": symbol,
+            "cheap": cheap,
+            "expensive": expensive,
+            "price_cheap": round(prices[cheap], 6),
+            "price_expensive": round(prices[expensive], 6),
+            "spread": round(net, 2),
+            "volume_1h": round(min_vol / 1_000_000, 2),
+        })
+
+    results.sort(key=lambda x: x["spread"], reverse=True)
+    return results[:10]
+
+# ================== BUY FLOW (REAL ORDERS) ==================
+def build_buy_keyboard(sig: Dict[str, Any]) -> InlineKeyboardMarkup:
+    data = f"{sig['cheap']}|{sig['expensive']}|{sig['symbol']}"
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("BUY 25", callback_data=f"buy:{data}:25"),
+        InlineKeyboardButton("BUY 50", callback_data=f"buy:{data}:50"),
+        InlineKeyboardButton("BUY 100", callback_data=f"buy:{data}:100"),
+    ]])
+
+async def on_buy_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    _, payload, usdt = q.data.split(":")
+    cheap, expensive, symbol = payload.split("|")
+    chat_id = q.message.chat.id
+    pending_trades[chat_id] = {"cheap": cheap, "expensive": expensive, "symbol": symbol, "usdt": float(usdt)}
+    await q.edit_message_text(
+        f"💰 Введите <b>сумму USDT</b> (или пришлите новую), по умолчанию: <b>{usdt}</b>\n"
+        f"Сделка: <code>{symbol}</code> — BUY на <b>{cheap.upper()}</b>, SELL на <b>{expensive.upper()}</b>",
+        parse_mode="HTML"
+    )
+
+async def on_amount_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    step = pending_trades.get(chat_id)
+    if not step:
+        return
+    txt = (update.message.text or "").strip().replace(",", ".")
+    try:
+        amt = float(txt)
+        step["usdt"] = amt
+    except Exception:
+        # оставить прежнюю сумму
+        pass
+
+    symbol = step["symbol"]
+    cheap = step["cheap"]
+    sell = step["expensive"]
+    ex_buy = exchanges.get(cheap)
+    ex_sell = exchanges.get(sell)
+    try:
+        tbuy = await ex_buy.fetch_ticker(symbol)
+        tsell = await ex_sell.fetch_ticker(symbol)
+        ask = safe_float(tbuy.get("ask"))
+        bid = safe_float(tsell.get("bid"))
+    except Exception as e:
+        return await update.message.reply_text(f"❌ Не смог получить цены: {e}")
+
+    profit_pct = (bid / ask - 1.0) * 100.0 - (TAKER_FEE_DEFAULT + TAKER_FEE_DEFAULT) * 100.0
+    profit_usd = step["usdt"] * profit_pct / 100.0
+    base = symbol.split("/")[0]
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm:{cheap}|{sell}|{symbol}|{step['usdt']}"),
+        InlineKeyboardButton("❌ Отмена", callback_data="cancel")
+    ]])
     text = (
-        f"🤖 *ARBITRAGE SCANNER {VERSION}*\n\n"
-        f"Подключено бирж: {len(exchanges)}\n"
+        f"<b>{symbol}</b>\n"
+        f"BUY {cheap.upper()} @ <code>{ask}</code>\n"
+        f"SELL {sell.upper()} @ <code>{bid}</code>\n"
+        f"Сумма: <b>{step['usdt']:.2f} USDT</b>\n"
+        f"Оценка профита: <b>{fmt_pct(profit_pct)}</b> (~{profit_usd:.2f} USDT)\n"
+        f"⚠️ Балансы должны быть: USDT на {cheap.upper()} и {base} на {sell.upper()}.\n"
+        f"Продолжить?"
+    )
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    _, payload = q.data.split(":")
+    cheap, sell, symbol, usdt = payload.split("|")
+    usdt = float(usdt)
+    base = symbol.split("/")[0]
+
+    ex_buy = exchanges.get(cheap)
+    ex_sell = exchanges.get(sell)
+
+    # 1) BUY на дешёвой бирже за USDT (market)
+    try:
+        bal_buy = await ex_buy.fetch_balance()
+        usdt_free = safe_float((bal_buy.get("USDT") or {}).get("free"))
+        if usdt_free <= 0:
+            raise RuntimeError(f"{cheap.upper()}: нет свободных USDT")
+        t = await ex_buy.fetch_ticker(symbol)
+        ask = safe_float(t.get("ask"))
+        if ask <= 0:
+            raise RuntimeError("bad ask")
+        spend = min(usdt, usdt_free)
+        base_amount_est = (spend * (1 - TAKER_FEE_DEFAULT)) / ask
+        # округление до допустимой точности биржи
+        amount = safe_float(ex_buy.amount_to_precision(symbol, base_amount_est), base_amount_est)
+        order_buy = await ex_buy.create_order(symbol, "market", "buy", amount)
+    except Exception as e:
+        await q.edit_message_text(f"❌ BUY ошибка на {cheap.upper()}: {e}")
+        return
+
+    # 2) SELL на дорогой бирже базовой монеты (market)
+    try:
+        bal_sell = await ex_sell.fetch_balance()
+        base_free = safe_float((bal_sell.get(base) or {}).get("free"))
+        if base_free <= 0:
+            raise RuntimeError(f"{sell.upper()}: нет свободного {base}")
+        # продаём не больше купленного и не больше свободного
+        sell_amount = min(base_free, amount)
+        sell_amount = safe_float(ex_sell.amount_to_precision(symbol, sell_amount), sell_amount)
+        order_sell = await ex_sell.create_order(symbol, "market", "sell", sell_amount)
+    except Exception as e:
+        await q.edit_message_text(
+            f"⚠️ BUY выполнен, но SELL не удалось на {sell.upper()}: {e}\n"
+            f"Проверь баланс и ордера вручную."
+        )
+        return
+
+    await q.edit_message_text(
+        f"✅ Готово:\n"
+        f"• BUY {symbol} на {cheap.upper()} ~<code>{amount}</code>\n"
+        f"• SELL {symbol} на {sell.upper()} ~<code>{sell_amount}</code>\n"
+        f"Проверь историю ордеров на биржах.",
+        parse_mode="HTML"
+    )
+    pending_trades.pop(q.message.chat.id, None)
+
+async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    pending_trades.pop(q.message.chat.id, None)
+    await q.edit_message_text("❌ Отменено.")
+
+# ================== COMMANDS ==================
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        f"<b>ARBITRAGE SCANNER {VERSION}</b>\n\n"
         f"Фильтры:\n"
-        f"• Мин. профит: {MIN_SPREAD:.1f}%\n"
-        f"• Мин. объём 1ч: {MIN_VOLUME_1H/1000:.0f}k$\n"
-        f"• Интервал автосканирования: {SCAN_INTERVAL} сек.\n\n"
-        "Доступные команды:\n"
-        "/scan — ручной поиск арбитражных пар\n"
-        "/status — состояние подключений\n"
+        f"• Мин. профит: <code>{MIN_SPREAD:.1f}%</code>\n"
+        f"• Мин. объём (1ч): <code>{MIN_VOLUME_1H/1000:.0f}k$</code>\n"
+        f"• Автоскан: каждые <code>{SCAN_INTERVAL}</code> сек\n\n"
+        "Команды:\n"
+        "/scan — разовый скан (топ-10)\n"
+        "/balance — баланс по биржам\n"
+        "/status — статус подключений\n"
+        "/scanlog — включить/выключить live-лог скана\n"
+        "/stop — отключить автоскан\n"
         "/info — подробная справка\n"
+        "/ping — пинг"
     )
     await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lines = ["📊 *Статус подключений:*"]
+async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        f"<b>ARBITRAGE SCANNER {VERSION} — справка</b>\n\n"
+        "1) <b>Описание</b>\n"
+        "Скан USDT-пар на нескольких спотовых биржах и поиск кросс-биржевого арбитража.\n\n"
+        "2) <b>Параметры</b>\n"
+        f"• Мин. профит: <code>{MIN_SPREAD}%</code>\n"
+        f"• Мин. объём: <code>{MIN_VOLUME_1H/1000:.0f}k$</code>\n"
+        f"• Автоскан: <code>{SCAN_INTERVAL} сек</code>\n\n"
+        "3) <b>Логика</b>\n"
+        "— собираем топ-ликвидные пары; считаем mid-price; фильтруем по объёму; считаем спред и чистую маржу после комиссий;\n"
+        "— выдаём топ сигналов; по клику — BUY/SELL на разных биржах (нужны балансы USDT и BASE). \n\n"
+        "4) <b>Команды</b>\n"
+        "/start, /scan, /balance, /status, /scanlog, /stop, /info, /ping\n\n"
+        "5) <b>Пример</b>\n"
+        "<code>BTC/USDT</code>: купить на MEXC 67000.2 → продать на Bitget 67750.3 → <b>+1.12%</b>\n\n"
+        "6) <b>Рекомендации</b>\n"
+        "— Держи USDT на дешёвой бирже и BASE-коин на дорогой; \n"
+        "— Не опускай SCAN_INTERVAL ниже 120 сек; \n"
+        "— TOPN_PER_EXCHANGE ≈ 50–100 для стабильности на Render."
+    )
+    await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
+
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Я здесь.", parse_mode="HTML")
+
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["<b>Статус подключений:</b>"]
     for name, st in exchange_status.items():
         emoji = "🟢" if st["status"] == "✅" else "🔴" if st["status"] == "❌" else "⚪"
-        lines.append(f"{emoji} {name.upper()} — {st['status']}")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        err = st["error"] or ""
+        lines.append(f"{emoji} {name.upper()} — {st['status']} {'| ' + err if err else ''}")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        f"<b>ARBITRAGE SCANNER {VERSION} — подробная справка</b>\n\n"
-        "🔹 <b>Описание:</b>\n"
-        "Бот сканирует биржи на предмет ценовых расхождений по USDT-парам и "
-        "ищет арбитражные возможности с учётом объёма и комиссий.\n\n"
-        "🔹 <b>Параметры:</b>\n"
-        f"• Мин. профит: <code>{MIN_SPREAD}%</code>\n"
-        f"• Мин. объём 1ч: <code>{MIN_VOLUME_1H/1000:.0f}k$</code>\n"
-        f"• Интервал скана: <code>{SCAN_INTERVAL} сек</code>\n\n"
-        "🔹 <b>Логика работы:</b>\n"
-        "1️⃣ Получает топ ликвидных пар на каждой бирже\n"
-        "2️⃣ Сравнивает средние цены (bid/ask)\n"
-        "3️⃣ Вычисляет спред и реальный профит после комиссий\n"
-        "4️⃣ Отбирает пары с профитом ≥ MIN_SPREAD и достаточным объёмом\n\n"
-        "🔹 <b>Команды:</b>\n"
-        "/start — параметры\n"
-        "/scan — ручной поиск\n"
-        "/status — подключение к биржам\n"
-        "/info — справка\n\n"
-        "🔹 <b>Пример:</b>\n"
-        "<code>BTC/USDT | Купить на MEXC (67000.2) → Продать на Bitget (67750.3) | +1.12%</code>\n\n"
-        "🔹 <b>Рекомендации:</b>\n"
-        "• Ставь SCAN_INTERVAL ≥ 120 сек для стабильности\n"
-        "• Добавляй только активные API-ключи\n"
-        "• Render может завершить процесс при избыточной нагрузке — оптимизируй top_n до 50\n"
-    )
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["<b>Баланс (USDT):</b>"]
+    for name, st in exchange_status.items():
+        ex = st.get("ex")
+        if st["status"] == "✅" and ex:
+            try:
+                b = await ex.fetch_balance()
+                free = safe_float((b.get("USDT") or {}).get("free"))
+                lines.append(f"{name.upper()}: <code>{free:.2f}</code> USDT")
+            except Exception as e:
+                lines.append(f"{name.upper()}: ошибка — {e}")
+        else:
+            lines.append(f"{name.upper()}: {st['status']}")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
+async def scanlog_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in scanlog_enabled:
+        scanlog_enabled.remove(chat_id)
+        await update.message.reply_text("🟡 Лог сканирования выключен.")
+    else:
+        scanlog_enabled.add(chat_id)
+        await update.message.reply_text("🟢 Лог сканирования включён.")
 
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.chat_data["autoscan"] = False
+    await update.message.reply_text("⏸️ Автоскан отключён.")
+
+async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    res = await scan_all_pairs(chat_id)
+    if not res:
+        return await update.message.reply_text("Сигналов нет.")
+    for sig in res:
+        txt = (
+            f"<b>{sig['symbol']}</b>\n"
+            f"Профит: <b>{sig['spread']}%</b>\n"
+            f"Купить: {sig['cheap'].upper()} <code>{sig['price_cheap']}</code>\n"
+            f"Продать: {sig['expensive'].upper()} <code>{sig['price_expensive']}</code>\n"
+            f"Объём 1ч: <code>{sig['volume_1h']}M</code>$"
+        )
+        await update.message.reply_text(txt, parse_mode="HTML", reply_markup=build_buy_keyboard(sig))
+
+# ================== AUTOSCAN (broadcast to enabled chats) ==================
+async def autoscan_tick():
+    if not app:
+        return
+    for data in app.chat_data.values():
+        if data.get("autoscan"):
+            chat_id = data["chat_id"]
+            try:
+                res = await scan_all_pairs(chat_id)
+                if not res:
+                    continue
+                for sig in res:
+                    txt = (
+                        f"<b>{sig['symbol']}</b>\n"
+                        f"Профит: <b>{sig['spread']}%</b>\n"
+                        f"Купить: {sig['cheap'].upper()} <code>{sig['price_cheap']}</code>\n"
+                        f"Продать: {sig['expensive'].upper()} <code>{sig['price_expensive']}</code>\n"
+                        f"Объём 1ч: <code>{sig['volume_1h']}M</code>$"
+                    )
+                    await app.bot.send_message(chat_id, txt, parse_mode="HTML", reply_markup=build_buy_keyboard(sig))
+            except Exception as e:
+                try:
+                    await app.bot.send_message(chat_id, f"⚠️ autoscan: {e}")
+                except Exception:
+                    pass
 
 # ================== MAIN ==================
 async def main():
     print("🚀 INIT START (Render + Telegram webhook)", flush=True)
-
-    # === Инициализация бирж ===
     await init_exchanges()
 
     global app
     app = (
         Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
+        .token(BOT_TOKEN)
         .concurrent_updates(True)
         .build()
     )
 
-    # === Команды ===
-    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("✅ Бот активен.")))
-    app.add_handler(CommandHandler("info", info))  # функция info с описанием
-    # при необходимости добавь остальные handlers (scan, status, balance, stop и т.д.)
+    # Commands/handlers
+    app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("info", info_cmd))
+    app.add_handler(CommandHandler("scan", scan_cmd))
+    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("scanlog", scanlog_cmd))
+    app.add_handler(CommandHandler("stop", stop_cmd))
+    app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CallbackQueryHandler(on_buy_click, pattern=r"^buy:"))
+    app.add_handler(CallbackQueryHandler(on_confirm, pattern=r"^confirm:"))
+    app.add_handler(CallbackQueryHandler(on_cancel, pattern=r"^cancel$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_amount_text))
 
-    # === Планировщик ===
+    # enable autoscan per-chat when /start
+    async def on_start_autoscan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        context.chat_data["chat_id"] = update.effective_chat.id
+        context.chat_data["autoscan"] = True
+    app.add_handler(CommandHandler("start", on_start_autoscan), group=1)
+
+    # Scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: None, "interval", seconds=SCAN_INTERVAL)
+    scheduler.add_job(autoscan_tick, "interval", seconds=SCAN_INTERVAL)
     scheduler.start()
 
-    # === Параметры webhook ===
+    # Webhook params
     PORT = int(os.getenv("PORT", "10000"))
     EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("WEBHOOK_URL", "")
     if not EXTERNAL_URL:
-        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL (Render HTTPS URL)")
+        raise SystemExit("❌ Нет RENDER_EXTERNAL_URL / WEBHOOK_URL")
 
-    WEBHOOK_PATH = f"/{TELEGRAM_BOT_TOKEN}"
+    WEBHOOK_PATH = f"/{BOT_TOKEN}"
     WEBHOOK_URL = f"{EXTERNAL_URL.rstrip('/')}{WEBHOOK_PATH}"
     WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "") or None
 
-    print(f"🌐 Webhook URL: {WEBHOOK_URL}", flush=True)
-    print(f"🔒 Secret set: {'yes' if WEBHOOK_SECRET else 'no'}", flush=True)
-    log(f"🌐 Listening on 0.0.0.0:{PORT} for Telegram webhook...")
-
-    # === Лог запуска ===
+    log(f"🌐 Webhook URL: {WEBHOOK_URL}")
+    log(f"🔒 Secret set: {'yes' if WEBHOOK_SECRET else 'no'}")
+    log(f"🌐 Listening on 0.0.0.0:{PORT} ...")
     log("===========================================================")
     log(f"✅ Arbitrage Scanner {VERSION} запущен (Render webhook mode)")
-    log(f"Порт: {PORT}")
-    log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч")
-    log(f"Автоскан каждые {SCAN_INTERVAL} сек (если включён)")
-    log("🌐 Webhook сервер запущен и слушает входящие обновления Telegram.")
+    log(f"Фильтры: профит ≥ {MIN_SPREAD}% | объём ≥ {MIN_VOLUME_1H/1000:.0f}k$/1ч | топ/биржу={TOPN_PER_EXCHANGE}")
+    log(f"Автоскан каждые {SCAN_INTERVAL} сек")
     log("===========================================================")
 
-    # === Запуск webhook с безопасным завершением ===
     try:
         await app.run_webhook(
             listen="0.0.0.0",
@@ -306,12 +566,9 @@ async def main():
         )
     finally:
         await close_all_exchanges()
-        log("🧹 Завершение работы — соединения закрыты.")
-
+        log("🧹 Завершение — соединения закрыты.")
 
 if __name__ == "__main__":
-    import nest_asyncio
     nest_asyncio.apply()
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
-
