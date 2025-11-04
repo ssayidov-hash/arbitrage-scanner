@@ -39,8 +39,8 @@ env = {
     "BIGONE_API_KEY": os.getenv("BIGONE_API_KEY"),
     "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
 
-    "BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
-    "BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
+    #"BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
+    #"BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
 
     "OKX_API_KEY": os.getenv("OKX_API_KEY"),
     "OKX_API_SECRET": os.getenv("OKX_API_SECRET"),
