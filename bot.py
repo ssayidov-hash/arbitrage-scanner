@@ -164,7 +164,7 @@ async def init_exchanges():
             "apiKey": env_vars["KRAKEN_API_KEY"],
             "secret": env_vars["KRAKEN_API_SECRET"]
         }),
-        "crypto": (ccxt.crypto, {
+        "crypto": (ccxt.cryptocom, {
             "apiKey": env_vars["CRYPTO_API_KEY"],
             "secret": env_vars["CRYPTO_API_SECRET"]
         }),
