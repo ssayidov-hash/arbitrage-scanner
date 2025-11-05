@@ -155,10 +155,10 @@ async def init_exchanges():
         "bigone": (ccxt.bigone, {
             "apiKey": env["BIGONE_API_KEY"], "secret": env["BIGONE_API_SECRET"]
         }),
-        "okx": (ccxt.okx, {
-            "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"],
-"password": env["OKX_API_PASSPHRASE"]
-        }),
+        #"okx": (ccxt.okx, {
+        #    "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"],
+        #"password": env["OKX_API_PASSPHRASE"]
+        #}),
         "kucoin": (ccxt.kucoin, {
             "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
         }),
