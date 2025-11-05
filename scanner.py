@@ -45,15 +45,14 @@ env = {
     #"BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
     #"BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
 
-    "OKX_API_KEY": 
-os.getenv("OKX_API_KEY"),
-    "OKX_API_SECRET": os.getenv("OKX_API_SECRET"),
-    "OKX_API_PASSPHRASE":
-os.getenv("OKX_API_PASSPHRASE"),
+    #"OKX_API_KEY": os.getenv("OKX_API_KEY"),
+    #"OKX_API_SECRET": os.getenv("OKX_API_SECRET"),
+    #"OKX_API_PASSPHRASE": os.getenv("OKX_API_PASSPHRASE"),
 
     "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
     "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
-
+    "KUCOIN_PASSWORD": os.getenv("KUCOIN_PASSWORD"),
+    
     # BYBIT отключён (403 CloudFront с Render)
     # "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY"),
     # "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET"),
@@ -160,7 +159,7 @@ async def init_exchanges():
         #"password": env["OKX_API_PASSPHRASE"]
         #}),
         "kucoin": (ccxt.kucoin, {
-            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"]
+            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"], "password": env["KUCOIN_PASSWORD"]
         }),
 
         # === OPTIONAL — UNCOMMENT TO ENABLE ===
