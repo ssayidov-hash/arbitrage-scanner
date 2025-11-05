@@ -42,9 +42,9 @@ env = {
     "BIGONE_API_KEY": os.getenv("BIGONE_API_KEY"),
     "BIGONE_API_SECRET": os.getenv("BIGONE_API_SECRET"),
 
-    "KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
-    "KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
-    "KUCOIN_PASSWORD": os.getenv("KUCOIN_PASSWORD"),
+    #"KUCOIN_API_KEY": os.getenv("KUCOIN_API_KEY"),
+    #"KUCOIN_API_SECRET": os.getenv("KUCOIN_API_SECRET"),
+    #"KUCOIN_PASSWORD": os.getenv("KUCOIN_PASSWORD"),
     
     #"BINANCE_API_KEY": os.getenv("BINANCE_API_KEY"),
     #"BINANCE_API_SECRET": os.getenv("BINANCE_API_SECRET"),
@@ -63,11 +63,11 @@ env = {
     "HTX_API_KEY": os.getenv("HTX_API_KEY"),
     "HTX_API_SECRET": os.getenv("HTX_API_SECRET"),
 
-    "KRAKEN_API_KEY": os.getenv("KRAKEN_API_KEY"),
-    "KRAKEN_API_SECRET": os.getenv("KRAKEN_API_SECRET"),
+    #"KRAKEN_API_KEY": os.getenv("KRAKEN_API_KEY"),
+    #"KRAKEN_API_SECRET": os.getenv("KRAKEN_API_SECRET"),
 
-    "CRYPTO_API_KEY": os.getenv("CRYPTO_API_KEY"),
-    "CRYPTO_API_SECRET": os.getenv("CRYPTO_API_SECRET"),
+    #"CRYPTO_API_KEY": os.getenv("CRYPTO_API_KEY"),
+    #"CRYPTO_API_SECRET": os.getenv("CRYPTO_API_SECRET"),
 
     "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
     "CHAT_ID": os.getenv("CHAT_ID"),
@@ -154,9 +154,9 @@ async def init_exchanges():
         "bigone": (ccxt.bigone, {
             "apiKey": env["BIGONE_API_KEY"], "secret": env["BIGONE_API_SECRET"]
         }),
-        "kucoin": (ccxt.kucoin, {
-            "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"], "password": env["KUCOIN_PASSWORD"]
-        }),
+        #"kucoin": (ccxt.kucoin, {
+        #    "apiKey": env["KUCOIN_API_KEY"], "secret": env["KUCOIN_API_SECRET"], "password": env["KUCOIN_PASSWORD"]
+        #}),
         
         #"okx": (ccxt.okx, {
         #    "apiKey": env["OKX_API_KEY"], "secret": env["OKX_API_SECRET"],
