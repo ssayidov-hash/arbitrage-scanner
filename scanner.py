@@ -166,8 +166,10 @@ async def init_exchanges():
         # "binance": (ccxt.binance, {
         #     "apiKey": env["BINANCE_API_KEY"], "secret": env["BINANCE_API_SECRET"]
         # }),
-         "gate": (ccxt.gate, {
-             "apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]
+        "gate": (ccxt.gate, {
+            "apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]
+        }),
+
         # }),
         # "htx": (ccxt.huobi, {
         #     "apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]
