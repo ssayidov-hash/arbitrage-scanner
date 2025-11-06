@@ -60,8 +60,8 @@ env = {
     "GATE_API_KEY": os.getenv("GATE_API_KEY"),
     "GATE_API_SECRET": os.getenv("GATE_API_SECRET"),
 
-    "HTX_API_KEY": os.getenv("HTX_API_KEY"),
-    "HTX_API_SECRET": os.getenv("HTX_API_SECRET"),
+    #"HTX_API_KEY": os.getenv("HTX_API_KEY"),
+    #"HTX_API_SECRET": os.getenv("HTX_API_SECRET"),
 
     #"KRAKEN_API_KEY": os.getenv("KRAKEN_API_KEY"),
     #"KRAKEN_API_SECRET": os.getenv("KRAKEN_API_SECRET"),
@@ -166,8 +166,8 @@ async def init_exchanges():
         # "binance": (ccxt.binance, {
         #     "apiKey": env["BINANCE_API_KEY"], "secret": env["BINANCE_API_SECRET"]
         # }),
-        # "gate": (ccxt.gate, {
-        #     "apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]
+         "gate": (ccxt.gate, {
+             "apiKey": env["GATE_API_KEY"], "secret": env["GATE_API_SECRET"]
         # }),
         # "htx": (ccxt.huobi, {
         #     "apiKey": env["HTX_API_KEY"], "secret": env["HTX_API_SECRET"]
