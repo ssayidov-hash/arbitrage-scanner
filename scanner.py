@@ -438,7 +438,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/scanlog — включить/выключить live-лог\n"
         "/stop — отключить автоскан\n"
         "/info — справка\n"
-        "/ping — пинг"
+        "/ping — пинг\n"
+        "/wake — ручной запуск после сна"
     )
     await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -455,7 +456,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "— собираем топ-ликвидные пары; считаем mid-price; фильтруем по объёму; считаем спред и чистую маржу после комиссий;\n"
         "— выдаём топ сигналов; по клику — BUY/SELL на разных биржах (нужны балансы USDT и базовой монеты). \n\n"
         "4) <b>Команды</b>\n"
-        "/start, /scan, /balance, /status, /scanlog, /stop, /info, /ping\n\n"
+        "/start, /scan, /balance, /status, /scanlog, /stop, /info, /ping, /wake\n\n"
         "5) <b>Пример</b>\n"
         "<code>BTC/USDT</code>: купить на MEXC 67000.2 → продать на Bitget 67750.3 → <b>+1.12%</b>\n\n"
         "6) <b>Рекомендации</b>\n"
@@ -467,6 +468,9 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Я здесь.", parse_mode="HTML")
+
+async def cmd_wake(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Я активен, сервер запущен и готов к работе!")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = [k.upper() for k, v in exchange_status.items() if v["status"] == "✅"]
@@ -579,6 +583,7 @@ async def main():
     app.add_handler(CommandHandler("scanlog", scanlog_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(CommandHandler("ping", ping_cmd))
+    app.add_handler(CommandHandler("wake", cmd_wake))
     app.add_handler(CallbackQueryHandler(on_buy_click, pattern=r"^buy:"))
     app.add_handler(CallbackQueryHandler(on_confirm, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(on_cancel, pattern=r"^cancel$"))
